@@ -1,10 +1,10 @@
 package agent
 
 import (
-	"QqBot/internal/agentruntime"
-	"QqBot/internal/common"
 	"context"
 	"encoding/json"
+	"qqbot-ai/internal/agentruntime"
+	"qqbot-ai/internal/common"
 	"strings"
 	"sync/atomic"
 	"time"

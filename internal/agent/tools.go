@@ -1,17 +1,17 @@
 package agent
 
 import (
-	"QqBot/internal/agentruntime"
-	"QqBot/internal/capabilities/messaging"
-	"QqBot/internal/capabilities/news"
-	storycap "QqBot/internal/capabilities/story"
-	"QqBot/internal/capabilities/terminal"
-	"QqBot/internal/capabilities/websearch"
-	"QqBot/internal/config"
-	"QqBot/internal/db"
 	"context"
 	"encoding/json"
 	"fmt"
+	"qqbot-ai/internal/agentruntime"
+	"qqbot-ai/internal/capabilities/messaging"
+	"qqbot-ai/internal/capabilities/news"
+	storycap "qqbot-ai/internal/capabilities/story"
+	"qqbot-ai/internal/capabilities/terminal"
+	"qqbot-ai/internal/capabilities/websearch"
+	"qqbot-ai/internal/config"
+	"qqbot-ai/internal/db"
 	"strings"
 )
 

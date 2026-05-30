@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"QqBot/internal/agent/context"
-	"QqBot/internal/agentruntime"
+	"qqbot-ai/internal/agent/context"
+	"qqbot-ai/internal/agentruntime"
 )
 
 // 它会把事件写入上下文，执行一轮 ReAct，保存助手和工具

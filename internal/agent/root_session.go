@@ -1,13 +1,13 @@
 package agent
 
 import (
-	"QqBot/internal/agentruntime"
-	"QqBot/internal/config"
-	"QqBot/internal/db"
-	"QqBot/internal/prompts"
 	"context"
 	"encoding/json"
 	"fmt"
+	"qqbot-ai/internal/agentruntime"
+	"qqbot-ai/internal/config"
+	"qqbot-ai/internal/db"
+	"qqbot-ai/internal/prompts"
 	"sort"
 	"strings"
 	"sync"
@@ -268,7 +268,7 @@ func (s *rootSession) availableInvokeTools() []string {
 	stateID := s.focused()
 	switch {
 	case strings.HasPrefix(stateID, "qq_group:"), strings.HasPrefix(stateID, "qq_private:"):
-		return []string{"send_message"}
+		return []string{"send_message", "search_web", "search_memory"}
 	case stateID == "ithome":
 		return []string{"open_ithome_article"}
 	case stateID == "terminal":

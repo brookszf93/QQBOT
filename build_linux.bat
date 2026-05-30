@@ -2,5 +2,5 @@
 setlocal
 set GOOS=linux
 set GOARCH=amd64
-go build -o build/QqBot
+go build -o build/qqbot-ai
 endlocal

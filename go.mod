@@ -1,4 +1,4 @@
-module QqBot
+module qqbot-ai
 
 go 1.26.2
 

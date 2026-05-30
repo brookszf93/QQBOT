@@ -1,11 +1,11 @@
 package story
 
 import (
-	"QqBot/internal/config"
-	"QqBot/internal/db"
-	"QqBot/internal/embedding"
 	"context"
 	"fmt"
+	"qqbot-ai/internal/config"
+	"qqbot-ai/internal/db"
+	"qqbot-ai/internal/embedding"
 	"sort"
 	"strings"
 )

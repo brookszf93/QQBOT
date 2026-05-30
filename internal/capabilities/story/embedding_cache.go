@@ -1,8 +1,8 @@
 package story
 
 import (
-	"QqBot/internal/db"
-	"QqBot/internal/embedding"
+	"qqbot-ai/internal/db"
+	"qqbot-ai/internal/embedding"
 )
 
 // StoreEmbeddingCache 把 embedding 客户端缓存接到本地 Store。

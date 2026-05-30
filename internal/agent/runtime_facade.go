@@ -1,19 +1,19 @@
 package agent
 
 import (
-	"QqBot/internal/agentruntime"
-	"QqBot/internal/capabilities/messaging"
-	"QqBot/internal/capabilities/terminal"
-	"QqBot/internal/capabilities/websearch"
-	"QqBot/internal/common"
-	"QqBot/internal/config"
-	"QqBot/internal/db"
-	"QqBot/internal/llm"
-	"QqBot/internal/prompts"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"qqbot-ai/internal/agentruntime"
+	"qqbot-ai/internal/capabilities/messaging"
+	"qqbot-ai/internal/capabilities/terminal"
+	"qqbot-ai/internal/capabilities/websearch"
+	"qqbot-ai/internal/common"
+	"qqbot-ai/internal/config"
+	"qqbot-ai/internal/db"
+	"qqbot-ai/internal/llm"
+	"qqbot-ai/internal/prompts"
 	"strings"
 	"sync"
 	"time"
@@ -283,8 +283,9 @@ func invokeToolGuide() string {
 	return strings.Join([]string{
 		"- 控制工具：enter 只能从 portal 进入子状态；back 返回上一级；wait 等待新事件；invoke 调用当前状态允许的业务工具。",
 		"- portal：没有可直接 invoke 的业务工具，请先 enter 到 QQ 群、私聊、IT之家、终端或神游。",
-		"- QQ 群/私聊状态：仅可 invoke send_message，arguments 参数必须包含非空 message；可省略 targetType/targetId，系统会使用当前会话。没有要发的内容就调用 wait。",
-		"- 需要搜索时：在允许的状态下 invoke search_web，arguments 参数：query。",
+		"- QQ 群/私聊状态：可 invoke send_message、search_web、search_memory。send_message 的 arguments 必须包含非空 message；可省略 targetType/targetId，系统会使用当前会话。没有要发的内容就调用 wait。",
+		"- 需要补充外部事实时：在 QQ 群/私聊状态下 invoke search_web，arguments 参数：query。",
+		"- 需要主动查找长期叙事记忆时：在 QQ 群/私聊状态下 invoke search_memory，arguments 参数：query。",
 		"- IT之家状态：仅可 invoke open_ithome_article，arguments 参数：articleId。看完想分享时先 back 回 portal，再 enter 对应群聊。",
 		"- 终端状态：仅可 invoke bash、read_bash_output。",
 		"- 神游状态：仅可 invoke zone_out，arguments 参数：thought。",

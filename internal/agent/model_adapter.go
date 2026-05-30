@@ -1,10 +1,10 @@
 package agent
 
 import (
-	"QqBot/internal/agentruntime"
-	"QqBot/internal/common"
-	"QqBot/internal/llm"
 	"context"
+	"qqbot-ai/internal/agentruntime"
+	"qqbot-ai/internal/common"
+	"qqbot-ai/internal/llm"
 	"strings"
 )
 

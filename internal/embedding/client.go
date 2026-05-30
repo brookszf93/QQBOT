@@ -1,7 +1,6 @@
 package embedding
 
 import (
-	"QqBot/internal/config"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -12,6 +11,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"qqbot-ai/internal/config"
 	"strings"
 	"time"
 )

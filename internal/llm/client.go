@@ -1,16 +1,16 @@
 package llm
 
 import (
-	"QqBot/internal/capabilities/vision"
-	"QqBot/internal/common"
-	"QqBot/internal/config"
-	"QqBot/internal/db"
 	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"qqbot-ai/internal/capabilities/vision"
+	"qqbot-ai/internal/common"
+	"qqbot-ai/internal/config"
+	"qqbot-ai/internal/db"
 	"strings"
 	"time"
 )

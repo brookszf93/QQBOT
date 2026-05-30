@@ -1,13 +1,13 @@
 package agent
 
 import (
-	"QqBot/internal/agentruntime"
-	storycap "QqBot/internal/capabilities/story"
-	"QqBot/internal/common"
-	"QqBot/internal/prompts"
 	"context"
 	"fmt"
 	"log"
+	"qqbot-ai/internal/agentruntime"
+	storycap "qqbot-ai/internal/capabilities/story"
+	"qqbot-ai/internal/common"
+	"qqbot-ai/internal/prompts"
 	"strings"
 	"time"
 )

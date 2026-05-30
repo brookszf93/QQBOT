@@ -4,33 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>QQBOT Console</title>
-    <style>
-      body { margin: 0; font-family: system-ui, sans-serif; background: #f7f7f4; color: #202124; }
-      header { padding: 18px 24px; border-bottom: 1px solid #ddd; background: #fff; }
-      main { padding: 20px 24px; display: grid; gap: 16px; }
-      section { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 16px; }
-      pre { white-space: pre-wrap; word-break: break-word; }
-      button { border: 1px solid #bbb; background: #fff; border-radius: 6px; padding: 8px 12px; cursor: pointer; }
-    </style>
+    <meta http-equiv="refresh" content="0; url=http://localhost:20003/" />
   </head>
   <body>
-    <header><strong>QQBOT Console</strong></header>
-    <main>
-      <section>
-        <button id="refresh">刷新状态</button>
-      </section>
-      <section><h2>Agent Dashboard</h2><pre id="dashboard">loading...</pre></section>
-      <section><h2>Health</h2><pre id="health">loading...</pre></section>
-    </main>
-    <script>
-      async function load() {
-        for (const [id, url] of [["dashboard", "/agent-dashboard/current"], ["health", "/health"]]) {
-          const res = await fetch(url);
-          document.getElementById(id).textContent = JSON.stringify(await res.json(), null, 2);
-        }
-      }
-      document.getElementById("refresh").addEventListener("click", load);
-      load();
-    </script>
+    <p>正在打开 <a href="http://localhost:20003/">QQBOT Console</a>。</p>
   </body>
 </html>

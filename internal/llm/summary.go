@@ -1,11 +1,11 @@
 package llm
 
 import (
-	"QqBot/internal/common"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"qqbot-ai/internal/common"
 	"strings"
 )
 

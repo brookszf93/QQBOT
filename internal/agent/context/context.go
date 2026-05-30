@@ -3,7 +3,7 @@ package contextstore
 import (
 	"sync"
 
-	"QqBot/internal/agentruntime"
+	"qqbot-ai/internal/agentruntime"
 )
 
 // Context 保存根 Agent 的系统提示词、聊天消息和原始事件。

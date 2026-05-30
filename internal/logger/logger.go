@@ -1,6 +1,6 @@
 package logger
 
-import "QqBot/internal/db"
+import "qqbot-ai/internal/db"
 
 // Logger 是一个由 Store 支撑的小型结构化日志器。
 //

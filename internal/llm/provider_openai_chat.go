@@ -1,14 +1,14 @@
 package llm
 
 import (
-	"QqBot/internal/common"
-	"QqBot/internal/config"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"qqbot-ai/internal/common"
+	"qqbot-ai/internal/config"
 	"strings"
 )
 

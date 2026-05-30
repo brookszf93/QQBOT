@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"QqBot/internal/agentruntime"
+	"qqbot-ai/internal/agentruntime"
 )
 
 // SearchWebRawTool 向内部网页搜索任务 Agent 暴露原始搜索结果。

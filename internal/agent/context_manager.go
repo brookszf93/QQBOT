@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"QqBot/internal/agentruntime"
+	"qqbot-ai/internal/agentruntime"
 	"sort"
 	"strings"
 	"time"

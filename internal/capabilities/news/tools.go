@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"QqBot/internal/agentruntime"
+	"qqbot-ai/internal/agentruntime"
 )
 
 // Article 是 Agent 可使用的标准化新闻文章。

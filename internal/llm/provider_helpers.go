@@ -1,8 +1,8 @@
 package llm
 
 import (
-	"QqBot/internal/common"
 	"encoding/json"
+	"qqbot-ai/internal/common"
 	"strings"
 )
 

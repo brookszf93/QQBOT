@@ -1,7 +1,7 @@
 package story
 
 import (
-	"QqBot/internal/db"
+	"qqbot-ai/internal/db"
 	"strings"
 )
 

@@ -45,7 +45,7 @@ type Service struct {
 func NewService(cfg Config) (*Service, error) {
 	if cfg.InitialCwd == "" {
 		home, _ := os.UserHomeDir()
-		cfg.InitialCwd = filepath.Join(home, "QQBOT")
+		cfg.InitialCwd = filepath.Join(home, "qqbot-ai")
 	}
 	if cfg.CommandTimeout <= 0 {
 		cfg.CommandTimeout = 30 * time.Second

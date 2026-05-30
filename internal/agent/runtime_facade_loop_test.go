@@ -1,11 +1,11 @@
 package agent
 
 import (
-	"QqBot/internal/agentruntime"
-	"QqBot/internal/capabilities/messaging"
-	"QqBot/internal/config"
 	"context"
 	"encoding/json"
+	"qqbot-ai/internal/agentruntime"
+	"qqbot-ai/internal/capabilities/messaging"
+	"qqbot-ai/internal/config"
 	"testing"
 	"time"
 )

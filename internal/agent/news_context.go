@@ -1,8 +1,8 @@
 package agent
 
 import (
-	"QqBot/internal/db"
-	"QqBot/internal/prompts"
+	"qqbot-ai/internal/db"
+	"qqbot-ai/internal/prompts"
 )
 
 func (a *AgentRuntime) renderNewsArticles(ids any) string {

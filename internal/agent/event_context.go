@@ -1,9 +1,9 @@
 package agent
 
 import (
-	"QqBot/internal/common"
-	"QqBot/internal/prompts"
 	"fmt"
+	"qqbot-ai/internal/common"
+	"qqbot-ai/internal/prompts"
 	"time"
 )
 

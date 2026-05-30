@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"QqBot/internal/agentruntime"
+	"qqbot-ai/internal/agentruntime"
 )
 
 // CreateStoryTool 允许 Story 任务 Agent 持久化新写出的 Story。

@@ -1,11 +1,11 @@
 package db
 
 import (
-	"QqBot/internal/common"
 	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"qqbot-ai/internal/common"
 	"sort"
 	"strings"
 	"sync"

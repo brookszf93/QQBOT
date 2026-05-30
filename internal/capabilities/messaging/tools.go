@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"QqBot/internal/agentruntime"
+	"qqbot-ai/internal/agentruntime"
 )
 
 // Sender 是 SendMessageTool 所需的 NapCat 消息发送能力子集。

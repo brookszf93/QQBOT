@@ -3,7 +3,7 @@ package vision
 import (
 	"context"
 
-	"QqBot/internal/prompts"
+	"qqbot-ai/internal/prompts"
 )
 
 // ImagePart 是传给视觉模型的一份图片载荷。

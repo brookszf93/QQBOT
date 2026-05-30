@@ -1,9 +1,9 @@
 package metric
 
 import (
-	"QqBot/internal/common"
-	"QqBot/internal/db"
 	"net/http"
+	"qqbot-ai/internal/common"
+	"qqbot-ai/internal/db"
 	"sort"
 	"time"
 )

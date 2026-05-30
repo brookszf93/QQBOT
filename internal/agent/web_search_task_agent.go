@@ -1,12 +1,12 @@
 package agent
 
 import (
-	"QqBot/internal/agentruntime"
-	"QqBot/internal/capabilities/websearch"
-	"QqBot/internal/common"
-	"QqBot/internal/prompts"
 	"context"
 	"encoding/json"
+	"qqbot-ai/internal/agentruntime"
+	"qqbot-ai/internal/capabilities/websearch"
+	"qqbot-ai/internal/common"
+	"qqbot-ai/internal/prompts"
 )
 
 type WebSearchTaskAgentTool struct {

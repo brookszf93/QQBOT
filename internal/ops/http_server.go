@@ -1,15 +1,15 @@
 package ops
 
 import (
-	rootagent "QqBot/internal/agent"
-	"QqBot/internal/common"
-	"QqBot/internal/config"
-	"QqBot/internal/db"
-	"QqBot/internal/llm"
-	"QqBot/internal/metric"
-	"QqBot/internal/napcat"
 	"embed"
 	"net/http"
+	rootagent "qqbot-ai/internal/agent"
+	"qqbot-ai/internal/common"
+	"qqbot-ai/internal/config"
+	"qqbot-ai/internal/db"
+	"qqbot-ai/internal/llm"
+	"qqbot-ai/internal/metric"
+	"qqbot-ai/internal/napcat"
 	"strings"
 	"time"
 )
@@ -69,6 +69,13 @@ func (s *HTTPServer) static(w http.ResponseWriter, r *http.Request) {
 func traceMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Trace-Id", common.NewID())
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }

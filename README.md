@@ -1,6 +1,6 @@
-# QQBOT Go
+# qqbot-ai Go
 
-QQBOT Go 不是一个单纯的“群聊回复机器人”。它是一个事件驱动的长期 Agent 运行时：QQ 群聊、私聊、新闻、定时唤醒、工具结果和长期记忆都会进入同一套生活流，由 Root Agent 判断要不要看、要不要说、要不要等待。
+qqbot-ai Go 不是一个单纯的“群聊回复机器人”。它是一个事件驱动的长期 Agent 运行时：QQ 群聊、私聊、新闻、定时唤醒、工具结果和长期记忆都会进入同一套生活流，由 Root Agent 判断要不要看、要不要说、要不要等待。
 
 项目当前以 Go 版本为主，默认使用本地 SQLite 存储，不再依赖旧的 JSON store。
 
@@ -133,7 +133,7 @@ http://localhost:20003
 常用配置项：
 
 - `server.port`：HTTP 服务端口。
-- `server.databaseUrl`：目前保留字段；实际固定使用 `data/QqBot-store.sqlite`。
+- `server.databaseUrl`：目前保留字段；实际固定使用 `data/qqbot-ai-store.sqlite`。
 - `server.bot.qq`：机器人自己的 QQ，用于过滤自己发出的消息和 prompt 身份。
 - `server.bot.creator.qq`：创造者 QQ，Root Agent 会优先关注。
 - `server.napcat.wsUrl`：NapCat WebSocket 地址。
@@ -226,7 +226,7 @@ TEI 路径会调用 `POST /embed`，请求体为 `{"inputs":"文本"}`。
 默认数据库：
 
 ```text
-data/QqBot-store.sqlite
+data/qqbot-ai-store.sqlite
 ```
 
 主要表：
@@ -305,7 +305,7 @@ go test ./...
 如果 Windows 默认 Go cache 没权限，可以临时指定到项目内：
 
 ```powershell
-$env:GOCACHE='D:\goGroup\workspace\qqbot - ai\.gocache'
-$env:GOMODCACHE='D:\goGroup\workspace\qqbot - ai\.gomodcache'
+$env:GOCACHE='D:\goGroup\workspace\qqbot-ai - ai\.gocache'
+$env:GOMODCACHE='D:\goGroup\workspace\qqbot-ai - ai\.gomodcache'
 go test ./...
 ```

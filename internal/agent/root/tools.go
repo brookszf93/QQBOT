@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"QqBot/internal/agentruntime"
+	"qqbot-ai/internal/agentruntime"
 )
 
 // EnterTool 将根会话切换到指定子状态。

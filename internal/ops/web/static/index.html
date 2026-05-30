@@ -5,32 +5,515 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>QQBOT Console</title>
     <style>
-      body { margin: 0; font-family: system-ui, sans-serif; background: #f7f7f4; color: #202124; }
-      header { padding: 18px 24px; border-bottom: 1px solid #ddd; background: #fff; }
-      main { padding: 20px 24px; display: grid; gap: 16px; }
-      section { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 16px; }
-      pre { white-space: pre-wrap; word-break: break-word; }
-      button { border: 1px solid #bbb; background: #fff; border-radius: 6px; padding: 8px 12px; cursor: pointer; }
+      :root {
+        color-scheme: light;
+        --bg: #f4f6f8;
+        --panel: #ffffff;
+        --line: #dce2e8;
+        --line-strong: #c7d0d9;
+        --text: #18212b;
+        --muted: #657383;
+        --accent: #1769aa;
+        --accent-soft: #eaf4fb;
+        --good: #16794a;
+        --warn: #a15c00;
+        --bad: #b42318;
+        --code: #f7f9fb;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      button, input, select, textarea { font: inherit; }
+      button {
+        border: 1px solid var(--line-strong);
+        border-radius: 5px;
+        background: var(--panel);
+        color: var(--text);
+        padding: 7px 11px;
+        cursor: pointer;
+      }
+      button:hover { border-color: var(--accent); color: var(--accent); }
+      button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+      button.danger { color: var(--bad); }
+      input, select, textarea {
+        width: 100%;
+        border: 1px solid var(--line-strong);
+        border-radius: 5px;
+        background: #fff;
+        color: var(--text);
+        padding: 7px 9px;
+      }
+      textarea { min-height: 96px; resize: vertical; }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
+      }
+      .app { min-height: 100vh; display: grid; grid-template-columns: 210px minmax(0, 1fr); }
+      .sidebar {
+        border-right: 1px solid var(--line);
+        background: #101923;
+        color: #dce7f1;
+        padding: 14px 10px;
+      }
+      .brand { padding: 4px 8px 14px; border-bottom: 1px solid #253544; margin-bottom: 10px; }
+      .brand strong { display: block; color: #fff; font-size: 16px; }
+      .brand span { color: #93a7b9; font-size: 12px; }
+      .nav { display: grid; gap: 3px; }
+      .nav button {
+        width: 100%;
+        border: 0;
+        background: transparent;
+        color: #b9c8d6;
+        padding: 8px 9px;
+        text-align: left;
+      }
+      .nav button:hover, .nav button.active { background: #203140; color: #fff; }
+      .main { min-width: 0; }
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 58px;
+        padding: 10px 18px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(255, 255, 255, .94);
+      }
+      h1, h2, h3 { margin: 0; font-weight: 650; letter-spacing: 0; }
+      h1 { font-size: 18px; }
+      h2 { font-size: 15px; }
+      h3 { font-size: 13px; }
+      .subtle { color: var(--muted); font-size: 12px; }
+      .content { padding: 16px 18px 28px; }
+      .view { display: none; }
+      .view.active { display: block; }
+      .toolbar, .form-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .toolbar input, .toolbar select { width: auto; min-width: 140px; }
+      .toolbar .grow { flex: 1 1 220px; }
+      .grid { display: grid; gap: 12px; }
+      .grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--panel);
+      }
+      .panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+      }
+      .panel-body { padding: 12px; }
+      .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+      .stat { border-left: 3px solid var(--accent); background: var(--panel); padding: 10px 12px; }
+      .stat span { display: block; color: var(--muted); font-size: 12px; }
+      .stat strong { display: block; margin-top: 2px; font-size: 20px; }
+      .table-wrap { overflow: auto; }
+      table { width: 100%; border-collapse: collapse; min-width: 760px; }
+      th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+      th { color: var(--muted); background: #fbfcfd; font-size: 12px; font-weight: 650; }
+      tr:last-child td { border-bottom: 0; }
+      td.mono { font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; }
+      .clip { max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .badge {
+        display: inline-block;
+        border-radius: 999px;
+        background: #eef2f6;
+        color: #455565;
+        padding: 2px 7px;
+        font-size: 12px;
+      }
+      .badge.good { background: #e8f7ef; color: var(--good); }
+      .badge.warn { background: #fff5df; color: var(--warn); }
+      .badge.bad { background: #fff0ee; color: var(--bad); }
+      .json { max-height: 420px; overflow: auto; background: var(--code); padding: 10px; }
+      details summary { cursor: pointer; color: var(--accent); }
+      .empty { padding: 22px; color: var(--muted); text-align: center; }
+      .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+      .form-grid .wide { grid-column: 1 / -1; }
+      label { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
+      .notice { display: none; margin-bottom: 12px; border: 1px solid var(--line); border-left: 3px solid var(--accent); background: #fff; padding: 9px 11px; }
+      .notice.show { display: block; }
+      .notice.error { border-left-color: var(--bad); color: var(--bad); }
+      .pagination { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 9px 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+      .pagination button { padding: 4px 8px; }
+      @media (max-width: 900px) {
+        .app { grid-template-columns: 1fr; }
+        .sidebar { border-right: 0; padding: 8px; }
+        .brand { display: none; }
+        .nav { display: flex; overflow-x: auto; }
+        .nav button { width: auto; white-space: nowrap; }
+        .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .grid.cols-2, .grid.cols-3 { grid-template-columns: 1fr; }
+        header { position: static; padding: 10px 12px; }
+        .content { padding: 12px; }
+      }
     </style>
   </head>
   <body>
-    <header><strong>QQBOT Console</strong></header>
-    <main>
-      <section>
-        <button id="refresh">刷新状态</button>
-      </section>
-      <section><h2>Agent Dashboard</h2><pre id="dashboard">loading...</pre></section>
-      <section><h2>Health</h2><pre id="health">loading...</pre></section>
-    </main>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand"><strong>QQBOT Console</strong><span>local operations</span></div>
+        <nav class="nav" id="nav">
+          <button data-view="overview" class="active">概览</button>
+          <button data-view="messages">QQ 消息</button>
+          <button data-view="llm-calls">LLM 调用</button>
+          <button data-view="logs">应用日志</button>
+          <button data-view="events">NapCat 事件</button>
+          <button data-view="stories">Story</button>
+          <button data-view="metrics">指标</button>
+          <button data-view="tools">操作台</button>
+        </nav>
+      </aside>
+      <div class="main">
+        <header>
+          <div>
+            <h1 id="page-title">概览</h1>
+            <div class="subtle" id="page-subtitle">Root Agent 和服务状态</div>
+          </div>
+          <button id="refresh">刷新</button>
+        </header>
+        <main class="content">
+          <div class="notice" id="notice"></div>
+
+          <section class="view active" id="view-overview">
+            <div class="stats" id="overview-stats"></div>
+            <div class="grid cols-2">
+              <section class="panel">
+                <div class="panel-head"><h2>Agent Dashboard</h2><span class="subtle" id="dashboard-time"></span></div>
+                <pre class="panel-body json" id="dashboard">loading...</pre>
+              </section>
+              <section class="panel">
+                <div class="panel-head"><h2>Health</h2><span class="subtle">GET /health</span></div>
+                <pre class="panel-body json" id="health">loading...</pre>
+              </section>
+            </div>
+          </section>
+
+          <section class="view" id="view-messages">
+            <div class="toolbar">
+              <select id="messages-type"><option value="">全部类型</option><option value="group">群聊</option><option value="private">私聊</option></select>
+              <input id="messages-group" placeholder="群号" />
+              <input id="messages-user" placeholder="QQ 号" />
+              <input id="messages-keyword" class="grow" placeholder="搜索消息内容" />
+              <button data-load="messages">查询</button>
+            </div>
+            <div class="panel" id="messages-result"></div>
+          </section>
+
+          <section class="view" id="view-llm-calls">
+            <div class="toolbar">
+              <input id="llm-provider" placeholder="provider" />
+              <input id="llm-model" placeholder="model" />
+              <select id="llm-status"><option value="">全部状态</option><option value="success">success</option><option value="failed">failed</option></select>
+              <button data-load="llm-calls">查询</button>
+            </div>
+            <div class="panel" id="llm-calls-result"></div>
+          </section>
+
+          <section class="view" id="view-logs">
+            <div class="toolbar">
+              <select id="logs-level"><option value="">全部级别</option><option value="info">info</option><option value="warn">warn</option><option value="error">error</option></select>
+              <input id="logs-message" class="grow" placeholder="搜索日志内容" />
+              <button data-load="logs">查询</button>
+            </div>
+            <div class="panel" id="logs-result"></div>
+          </section>
+
+          <section class="view" id="view-events">
+            <div class="toolbar">
+              <input id="events-post-type" placeholder="postType" />
+              <input id="events-message-type" placeholder="messageType" />
+              <input id="events-user" placeholder="QQ 号" />
+              <button data-load="events">查询</button>
+            </div>
+            <div class="panel" id="events-result"></div>
+          </section>
+
+          <section class="view" id="view-stories">
+            <div class="toolbar">
+              <input id="stories-query" class="grow" placeholder="搜索 Story 标题、人物或正文" />
+              <button data-load="stories">查询</button>
+              <button id="reindex-story">重建索引</button>
+            </div>
+            <div class="panel" id="stories-result"></div>
+          </section>
+
+          <section class="view" id="view-metrics">
+            <div class="toolbar">
+              <select id="metric-chart"></select>
+              <select id="metric-range"><option value="">默认范围</option><option value="1h">1h</option><option value="6h">6h</option><option value="12h">12h</option><option value="1d">1d</option><option value="2d">2d</option></select>
+              <select id="metric-bucket"><option value="">默认粒度</option><option value="10s">10s</option><option value="5m">5m</option><option value="30m">30m</option><option value="1h">1h</option></select>
+              <button data-load="metrics">加载数据</button>
+            </div>
+            <div class="grid cols-2">
+              <section class="panel">
+                <div class="panel-head"><h2>图表列表</h2><div><button id="refresh-metric-list">刷新</button> <button class="danger" id="delete-metric">删除所选</button></div></div>
+                <div class="panel-body">
+                  <div id="metric-list"></div>
+                  <hr>
+                  <form id="metric-form" class="form-grid">
+                    <label>图表名称<input id="metric-create-chart" required /></label>
+                    <label>指标名称<input id="metric-create-name" required /></label>
+                    <label>聚合方式<select id="metric-create-aggregator"><option value="sum">sum</option><option value="count">count</option><option value="avg">avg</option><option value="min">min</option><option value="max">max</option><option value="last">last</option></select></label>
+                    <label>分组 Tag<input id="metric-create-group" placeholder="可选" /></label>
+                    <div class="wide"><button type="submit">保存图表</button></div>
+                  </form>
+                </div>
+              </section>
+              <section class="panel">
+                <div class="panel-head"><h2>图表数据</h2></div>
+                <pre class="panel-body json" id="metric-data">请选择图表</pre>
+              </section>
+            </div>
+          </section>
+
+          <section class="view" id="view-tools">
+            <div class="grid cols-2">
+              <section class="panel">
+                <div class="panel-head"><h2>发送 QQ 消息</h2></div>
+                <div class="panel-body">
+                  <form id="send-form" class="form-grid">
+                    <label>目标类型<select id="send-type"><option value="group">群聊</option><option value="private">私聊</option></select></label>
+                    <label>群号 / QQ 号<input id="send-target" required placeholder="253631878" /></label>
+                    <label class="wide">消息<textarea id="send-message" required placeholder="输入要发送的内容"></textarea></label>
+                    <div class="wide"><button class="primary" type="submit">发送</button></div>
+                  </form>
+                </div>
+              </section>
+              <section class="panel">
+                <div class="panel-head"><h2>LLM Playground</h2><button id="load-providers" type="button">读取 Provider</button></div>
+                <div class="panel-body">
+                  <form id="llm-form" class="form-grid">
+                    <label>Provider<input id="play-provider" value="openai-codex" /></label>
+                    <label>Model<input id="play-model" value="gpt-5.4" /></label>
+                    <label class="wide">Prompt<textarea id="play-prompt" placeholder="输入测试消息"></textarea></label>
+                    <div class="wide"><button class="primary" type="submit">调用 LLM</button></div>
+                  </form>
+                  <pre class="json" id="play-result">等待调用</pre>
+                </div>
+              </section>
+              <section class="panel">
+                <div class="panel-head"><h2>Provider</h2><span class="subtle">GET /llm/providers</span></div>
+                <pre class="panel-body json" id="providers">尚未读取</pre>
+              </section>
+              <section class="panel">
+                <div class="panel-head"><h2>Playground Tools</h2><span class="subtle">GET /llm/playground-tools</span></div>
+                <pre class="panel-body json" id="playground-tools">loading...</pre>
+              </section>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
     <script>
-      async function load() {
-        for (const [id, url] of [["dashboard", "/agent-dashboard/current"], ["health", "/health"]]) {
-          const res = await fetch(url);
-          document.getElementById(id).textContent = JSON.stringify(await res.json(), null, 2);
+      const $ = id => document.getElementById(id);
+      const apiBase = location.port === "20003" ? "" : "http://localhost:20003";
+      const titles = {
+        overview: ["概览", "Root Agent 和服务状态"],
+        messages: ["QQ 消息", "标准化后的群聊与私聊消息"],
+        "llm-calls": ["LLM 调用", "Provider 请求、响应和错误记录"],
+        logs: ["应用日志", "服务运行日志"],
+        events: ["NapCat 事件", "原始 WebSocket 事件"],
+        stories: ["Story", "长期叙事记忆"],
+        metrics: ["指标", "运行时指标图表"],
+        tools: ["操作台", "手动发送和 LLM 调试"]
+      };
+      const state = { active: "overview", pages: {} };
+
+      function esc(value) {
+        return String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+      }
+      function json(value) { return JSON.stringify(value ?? {}, null, 2); }
+      function time(value) {
+        if (!value) return "";
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString("zh-CN", { hour12: false });
+      }
+      function clip(value, length = 120) {
+        const text = typeof value === "string" ? value : json(value);
+        return text.length > length ? text.slice(0, length) + "..." : text;
+      }
+      function badge(value) {
+        const text = String(value ?? "");
+        const tone = text === "success" || text === "ok" || text === "info" ? "good" : text === "failed" || text === "error" ? "bad" : text === "warn" ? "warn" : "";
+        return `<span class="badge ${tone}">${esc(text)}</span>`;
+      }
+      function details(value) {
+        return `<details><summary>查看</summary><pre class="json">${esc(json(value))}</pre></details>`;
+      }
+      function notice(message, error = false) {
+        $("notice").textContent = message;
+        $("notice").className = "notice show" + (error ? " error" : "");
+        clearTimeout(notice.timer);
+        notice.timer = setTimeout(() => $("notice").className = "notice", 3500);
+      }
+      async function request(url, options) {
+        const res = await fetch(apiBase + url, options);
+        const payload = await res.json().catch(() => ({ message: "响应不是 JSON" }));
+        if (!res.ok) throw new Error(payload.message || `${res.status} ${res.statusText}`);
+        return payload;
+      }
+      function params(values) {
+        const query = new URLSearchParams({ page: "1", pageSize: "50" });
+        for (const [key, value] of Object.entries(values)) if (String(value ?? "").trim()) query.set(key, String(value).trim());
+        return query.toString();
+      }
+      function table(target, headers, rows, pagination) {
+        const body = rows.length ? rows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("") : `<tr><td colspan="${headers.length}" class="empty">暂无数据</td></tr>`;
+        const meta = pagination ? `<div class="pagination"><span>共 ${pagination.total} 条，当前显示 ${rows.length} 条</span><span>page ${pagination.page}</span></div>` : "";
+        $(target).innerHTML = `<div class="table-wrap"><table><thead><tr>${headers.map(x => `<th>${esc(x)}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div>${meta}`;
+      }
+
+      async function loadOverview() {
+        const [dashboard, health] = await Promise.all([request("/agent-dashboard/current"), request("/health")]);
+        $("dashboard").textContent = json(dashboard);
+        $("health").textContent = json(health);
+        $("dashboard-time").textContent = time(health.timestamp);
+        const root = dashboard.root ?? dashboard.agent ?? dashboard;
+        const story = dashboard.story ?? dashboard.storyAgent ?? {};
+        $("overview-stats").innerHTML = [
+          ["Health", health.status ?? "unknown"],
+          ["Root State", root.loopState ?? root.state ?? "unknown"],
+          ["Root Messages", root.messageCount ?? root.messages?.length ?? "-"],
+          ["Story State", story.loopState ?? story.state ?? "unknown"]
+        ].map(([label, value]) => `<div class="stat"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join("");
+      }
+      async function loadMessages() {
+        const data = await request("/napcat-group-message/query?" + params({ messageType: $("messages-type").value, groupId: $("messages-group").value, userId: $("messages-user").value, keyword: $("messages-keyword").value }));
+        table("messages-result", ["时间", "类型", "目标", "发送者", "消息", "详情"], data.items.map(x => [
+          esc(time(x.eventTime || x.createdAt)), badge(x.messageType), esc(x.groupId || x.userId || ""), esc(x.nickname || x.userId || ""),
+          `<div class="clip">${esc(clip(x.message, 180))}</div>`, details(x)
+        ]), data.pagination);
+      }
+      async function loadLlmCalls() {
+        const data = await request("/llm-chat-call/query?" + params({ provider: $("llm-provider").value, model: $("llm-model").value, status: $("llm-status").value }));
+        table("llm-calls-result", ["时间", "状态", "Provider", "Model", "耗时", "错误", "详情"], data.items.map(x => [
+          esc(time(x.createdAt)), badge(x.status), esc(x.provider), esc(x.model), esc(x.latencyMs == null ? "" : `${x.latencyMs} ms`),
+          `<div class="clip">${esc(clip(x.error?.message || "", 120))}</div>`, details(x)
+        ]), data.pagination);
+      }
+      async function loadLogs() {
+        const data = await request("/app-log/query?" + params({ level: $("logs-level").value, message: $("logs-message").value }));
+        table("logs-result", ["时间", "级别", "消息", "Trace ID", "元数据"], data.items.map(x => [
+          esc(time(x.createdAt)), badge(x.level), `<div class="clip">${esc(clip(x.message, 180))}</div>`, `<span class="mono">${esc(x.traceId)}</span>`, details(x.metadata)
+        ]), data.pagination);
+      }
+      async function loadEvents() {
+        const data = await request("/napcat-event/query?" + params({ postType: $("events-post-type").value, messageType: $("events-message-type").value, userId: $("events-user").value }));
+        table("events-result", ["时间", "postType", "messageType", "目标", "用户", "Payload"], data.items.map(x => [
+          esc(time(x.eventTime || x.createdAt)), badge(x.postType), esc(x.messageType || ""), esc(x.groupId || ""), esc(x.userId || ""), details(x.payload)
+        ]), data.pagination);
+      }
+      async function loadStories() {
+        const data = await request("/story/query?" + params({ query: $("stories-query").value }));
+        table("stories-result", ["更新时间", "标题", "时间范围", "场景", "人物", "Story"], data.items.map(x => [
+          esc(time(x.updatedAt)), `<strong>${esc(x.title)}</strong>`, esc(x.time), esc(x.scene), esc((x.people || []).join("、")), details(x)
+        ]), data.pagination);
+      }
+      async function loadMetricList() {
+        const data = await request("/metric-chart/list");
+        const items = Array.isArray(data) ? data : data.items || data.charts || [];
+        $("metric-list").innerHTML = items.length ? items.map(x => `<div><strong>${esc(x.chartName || x.name)}</strong><div class="subtle">${esc(x.metricName || "")}</div></div>`).join("<hr>") : `<div class="empty">暂无图表</div>`;
+        $("metric-chart").innerHTML = `<option value="">选择图表</option>` + items.map(x => `<option value="${esc(x.chartName || x.name)}">${esc(x.chartName || x.name)}</option>`).join("");
+      }
+      async function loadMetrics() {
+        const chartName = $("metric-chart").value;
+        if (!chartName) return notice("请先选择图表", true);
+        const query = params({ chartName, rangePreset: $("metric-range").value, bucket: $("metric-bucket").value });
+        $("metric-data").textContent = json(await request("/metric-chart/data?" + query));
+      }
+      const loaders = { overview: loadOverview, messages: loadMessages, "llm-calls": loadLlmCalls, logs: loadLogs, events: loadEvents, stories: loadStories, metrics: loadMetricList };
+
+      async function load(name = state.active) {
+        try {
+          if (loaders[name]) await loaders[name]();
+          if (name === "tools") $("playground-tools").textContent = json(await request("/llm/playground-tools"));
+        } catch (error) {
+          notice(error.message, true);
         }
       }
-      document.getElementById("refresh").addEventListener("click", load);
-      load();
+      function activate(name) {
+        state.active = name;
+        document.querySelectorAll(".nav button").forEach(button => button.classList.toggle("active", button.dataset.view === name));
+        document.querySelectorAll(".view").forEach(view => view.classList.toggle("active", view.id === `view-${name}`));
+        [$("page-title").textContent, $("page-subtitle").textContent] = titles[name];
+        load(name);
+      }
+
+      $("nav").addEventListener("click", event => {
+        const button = event.target.closest("button[data-view]");
+        if (button) activate(button.dataset.view);
+      });
+      $("refresh").addEventListener("click", () => load());
+      document.querySelectorAll("[data-load]").forEach(button => button.addEventListener("click", () => load(button.dataset.load)));
+      $("refresh-metric-list").addEventListener("click", loadMetricList);
+      $("metric-form").addEventListener("submit", async event => {
+        event.preventDefault();
+        const body = { chartName: $("metric-create-chart").value.trim(), metricName: $("metric-create-name").value.trim(), aggregator: $("metric-create-aggregator").value, groupByTag: $("metric-create-group").value.trim() };
+        try { await request("/metric-chart/create", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); notice("指标图表已保存"); await loadMetricList(); }
+        catch (error) { notice(error.message, true); }
+      });
+      $("delete-metric").addEventListener("click", async () => {
+        const chartName = $("metric-chart").value;
+        if (!chartName) return notice("请先选择要删除的图表", true);
+        try { await request("/metric-chart/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chartName }) }); notice("指标图表已删除"); await loadMetricList(); $("metric-data").textContent = "请选择图表"; }
+        catch (error) { notice(error.message, true); }
+      });
+      $("reindex-story").addEventListener("click", async () => {
+        try { notice("Story 索引请求完成：" + json(await request("/story/reindex", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }))); }
+        catch (error) { notice(error.message, true); }
+      });
+      $("send-form").addEventListener("submit", async event => {
+        event.preventDefault();
+        const type = $("send-type").value;
+        const target = $("send-target").value.trim();
+        const message = $("send-message").value.trim();
+        const url = type === "group" ? "/napcat/group/send" : "/napcat/private/send";
+        const body = type === "group" ? { groupId: target, message } : { userId: target, message };
+        try {
+          const data = await request(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+          $("send-message").value = "";
+          notice(`发送成功，messageId=${data.messageId}`);
+        } catch (error) { notice(error.message, true); }
+      });
+      $("load-providers").addEventListener("click", async () => {
+        try { $("providers").textContent = json(await request("/llm/providers")); }
+        catch (error) { notice(error.message, true); }
+      });
+      $("llm-form").addEventListener("submit", async event => {
+        event.preventDefault();
+        const body = {
+          provider: $("play-provider").value.trim(),
+          model: $("play-model").value.trim(),
+          messages: [{ role: "user", content: $("play-prompt").value }],
+          tools: [],
+          toolChoice: "auto"
+        };
+        $("play-result").textContent = "calling...";
+        try { $("play-result").textContent = json(await request("/llm/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })); }
+        catch (error) { $("play-result").textContent = error.message; notice(error.message, true); }
+      });
+      loadOverview().catch(error => notice(error.message, true));
     </script>
   </body>
 </html>

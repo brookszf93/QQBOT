@@ -1,9 +1,9 @@
 package llm
 
 import (
-	"QqBot/internal/config"
 	"context"
 	"fmt"
+	"qqbot-ai/internal/config"
 	"strings"
 )
 

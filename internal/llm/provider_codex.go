@@ -1,8 +1,6 @@
 package llm
 
 import (
-	"QqBot/internal/common"
-	"QqBot/internal/config"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -11,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"qqbot-ai/internal/common"
+	"qqbot-ai/internal/config"
 	"strings"
 )
 
@@ -29,7 +29,7 @@ func (c *LLMClient) callOpenAICodex(ctx context.Context, req LLMChatRequest, con
 	httpReq.Header.Set("Authorization", "Bearer "+token)
 	httpReq.Header.Set("Accept", "text/event-stream")
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("User-Agent", "QQBOT/1.0")
+	httpReq.Header.Set("User-Agent", "qqbot-ai/1.0")
 	res, err := c.http.Do(httpReq)
 	if err != nil {
 		return nativeReq, nil, nil, err

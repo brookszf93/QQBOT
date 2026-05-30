@@ -2,7 +2,7 @@ server:
   # Go HTTP 服务端口；管理台和 API 都从这个端口访问。
   port: 8000
 
-  # 数据库连接地址。当前 Go 版实际使用本地 SQLite 文件 data/QqBot-store.sqlite。
+  # 数据库连接地址。当前 Go 版实际使用本地 SQLite 文件 data/qqbot-ai-store.sqlite。
   databaseUrl: ""
 
   bot:

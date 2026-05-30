@@ -1,8 +1,8 @@
 package agent
 
 import (
-	"QqBot/internal/agentruntime"
 	"encoding/json"
+	"qqbot-ai/internal/agentruntime"
 	"time"
 )
 

@@ -1,14 +1,14 @@
 package news
 
 import (
-	rootagent "QqBot/internal/agent"
-	"QqBot/internal/config"
-	"QqBot/internal/db"
 	"context"
 	"encoding/xml"
 	"html"
 	"io"
 	"net/http"
+	rootagent "qqbot-ai/internal/agent"
+	"qqbot-ai/internal/config"
+	"qqbot-ai/internal/db"
 	"regexp"
 	"strings"
 	"time"

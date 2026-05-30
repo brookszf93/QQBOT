@@ -1,10 +1,10 @@
 package napcat
 
 import (
-	"QqBot/internal/capabilities/vision"
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"qqbot-ai/internal/capabilities/vision"
 	"testing"
 )
 

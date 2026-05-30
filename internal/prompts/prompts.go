@@ -1,8 +1,8 @@
 package prompts
 
 import (
-	"QqBot/internal/config"
 	"fmt"
+	"qqbot-ai/internal/config"
 	"strings"
 )
 
