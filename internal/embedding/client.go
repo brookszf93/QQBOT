@@ -75,8 +75,6 @@ func (c *Client) Embed(ctx context.Context, req Request) (Response, error) {
 	var resp Response
 	var err error
 	switch c.cfg.Provider {
-	case "tei-embedding-gemma":
-		resp, err = c.embedTEI(ctx, req.Content, model)
 	case "google":
 		resp, err = c.embedGoogle(ctx, req.Content, taskType, model, dim)
 	default:
@@ -89,34 +87,6 @@ func (c *Client) Embed(ctx context.Context, req Request) (Response, error) {
 		c.cache.SaveEmbedding(key, req.Content, resp.Embedding)
 	}
 	return resp, nil
-}
-
-func (c *Client) embedTEI(ctx context.Context, content, model string) (Response, error) {
-	baseURL := strings.TrimRight(c.cfg.BaseURL, "/")
-	body, _ := json.Marshal(map[string]any{"inputs": content})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/embed", bytes.NewReader(body))
-	if err != nil {
-		return Response{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	res, err := c.client.Do(req)
-	if err != nil {
-		return Response{}, err
-	}
-	defer res.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(res.Body, 8<<20))
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return Response{}, fmt.Errorf("TEI embedding request failed: %s", res.Status)
-	}
-	var payload any
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return Response{}, err
-	}
-	embedding, ok := firstEmbedding(payload)
-	if !ok {
-		return Response{}, fmt.Errorf("TEI embedding response is invalid")
-	}
-	return Response{Provider: "tei-embedding-gemma", Model: model, Embedding: embedding}, nil
 }
 
 func (c *Client) embedGoogle(ctx context.Context, content, taskType, model string, dim int) (Response, error) {
