@@ -38,7 +38,7 @@ func NewVectorRecall(cfg *config.Config, store *db.Store) *VectorRecall {
 
 func (r *VectorRecall) Search(ctx context.Context, query string, limit int) ([]Story, error) {
 	if r == nil || r.client == nil {
-		return nil, fmt.Errorf("story vector recall is not configured")
+		return nil, fmt.Errorf("Story 向量召回未配置")
 	}
 	if limit <= 0 {
 		limit = r.defaultTopK

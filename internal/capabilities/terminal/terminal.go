@@ -95,10 +95,10 @@ func NewService(cfg Config, store OutputStore) (*Service, error) {
 func (s *Service) Run(ctx context.Context, command string) (Output, error) {
 	command = strings.TrimSpace(command)
 	if command == "" {
-		return Output{}, fmt.Errorf("command is empty")
+		return Output{}, fmt.Errorf("命令不能为空")
 	}
 	if len(command) > s.cfg.MaxCommandLength {
-		return Output{}, fmt.Errorf("command too long")
+		return Output{}, fmt.Errorf("命令太长")
 	}
 	if nextCwd, ok, err := s.resolveCD(command); ok {
 		if err != nil {
@@ -119,7 +119,7 @@ func (s *Service) Run(ctx context.Context, command string) (Output, error) {
 	s.mu.Lock()
 	if s.running {
 		s.mu.Unlock()
-		return Output{}, fmt.Errorf("bash command already running")
+		return Output{}, fmt.Errorf("已有 bash 命令正在运行")
 	}
 	s.running = true
 	s.mu.Unlock()
@@ -215,7 +215,7 @@ func (s *Service) resolveCD(command string) (string, bool, error) {
 		return "", true, err
 	}
 	if !info.IsDir() {
-		return "", true, fmt.Errorf("not a directory: %s", target)
+		return "", true, fmt.Errorf("不是目录：%s", target)
 	}
 	return target, true, nil
 }

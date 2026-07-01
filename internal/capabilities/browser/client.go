@@ -72,16 +72,16 @@ func NewClient(cfg Config) (*Client, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse browser base URL: %w", err)
+		return nil, fmt.Errorf("解析浏览器 base URL 失败：%w", err)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return nil, errors.New("browser base URL must use http or https")
+		return nil, errors.New("浏览器 base URL 必须使用 http 或 https")
 	}
 	if parsed.Hostname() == "" {
-		return nil, errors.New("browser base URL has no host")
+		return nil, errors.New("浏览器 base URL 缺少 host")
 	}
 	if !isLoopbackHost(parsed.Hostname()) && strings.TrimSpace(cfg.AuthToken) == "" {
-		return nil, errors.New("remote browser sidecar requires authToken")
+		return nil, errors.New("远程浏览器 sidecar 需要配置 authToken")
 	}
 	timeout := cfg.Timeout
 	if timeout <= 0 {
@@ -114,7 +114,7 @@ func (c *Client) Do(ctx context.Context, request ActionRequest) (ActionResponse,
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return ActionResponse{}, fmt.Errorf("browser sidecar request failed: %w", err)
+		return ActionResponse{}, fmt.Errorf("浏览器 sidecar 请求失败：%w", err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
@@ -123,13 +123,13 @@ func (c *Client) Do(ctx context.Context, request ActionRequest) (ActionResponse,
 	}
 	var result ActionResponse
 	if err := json.Unmarshal(data, &result); err != nil {
-		return ActionResponse{}, fmt.Errorf("decode browser sidecar response: %w", err)
+		return ActionResponse{}, fmt.Errorf("解析浏览器 sidecar 响应失败：%w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if result.Message == "" {
 			result.Message = strings.TrimSpace(string(data))
 		}
-		return result, fmt.Errorf("browser sidecar returned %s: %s", resp.Status, result.Message)
+		return result, fmt.Errorf("浏览器 sidecar 返回 %s：%s", resp.Status, result.Message)
 	}
 	result.Text = trimRunes(result.Text, c.maxResultChars)
 	return result, nil

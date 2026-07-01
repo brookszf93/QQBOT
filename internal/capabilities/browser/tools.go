@@ -228,11 +228,11 @@ func appendMessage(current, next string) string {
 type finalizeTool struct{}
 
 func (finalizeTool) Definition() agentruntime.ToolDefinition {
-	return agentruntime.ToolDefinition{Name: "finalize_browser", Description: "浏览器任务完成后，把结果和当前页面状态提交给主 Agent。", Parameters: agentruntime.ObjectSchema(map[string]any{
+	return agentruntime.ToolDefinition{Name: "finalize_browser", Description: "浏览器任务完成后，把结果和当前页面状态提交给主智能体。", Parameters: agentruntime.ObjectSchema(map[string]any{
 		"summary":   map[string]any{"type": "string", "description": "基于浏览器实际页面得到的中文结果。"},
 		"url":       map[string]any{"type": "string", "description": "最终页面 URL。"},
 		"title":     map[string]any{"type": "string", "description": "最终页面标题。"},
-		"imagePath": map[string]any{"type": "string", "description": "需要让主 Agent 发送截图时，原样填写 browser_screenshot/browser_watch 返回的 metadata.imagePath；仅识图时留空。"},
+		"imagePath": map[string]any{"type": "string", "description": "需要让主智能体发送截图时，原样填写 browser_screenshot/browser_watch 返回的 metadata.imagePath；仅识图时留空。"},
 	})}
 }
 

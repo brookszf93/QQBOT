@@ -34,7 +34,7 @@ func (t SearchWebRawTool) Execute(ctx context.Context, call agentruntime.ToolCal
 type FinalizeWebSearchTool struct{}
 
 func (FinalizeWebSearchTool) Definition() agentruntime.ToolDefinition {
-	return agentruntime.ToolDefinition{Name: "finalize_web_search", Description: "在信息已经足够时提交最终搜索摘要。摘要必须基于已检索到的结果，并明确保留不确定性。", Parameters: agentruntime.ObjectSchema(map[string]any{"summary": map[string]any{"type": "string", "description": "给主 Agent 的最终中文摘要。"}})}
+	return agentruntime.ToolDefinition{Name: "finalize_web_search", Description: "在信息已经足够时提交最终搜索摘要。摘要必须基于已检索到的结果，并明确保留不确定性。", Parameters: agentruntime.ObjectSchema(map[string]any{"summary": map[string]any{"type": "string", "description": "给主智能体的最终中文摘要。"}})}
 }
 func (FinalizeWebSearchTool) Kind() string { return "control" }
 func (FinalizeWebSearchTool) Execute(_ context.Context, call agentruntime.ToolCall) (agentruntime.ToolResult, error) {

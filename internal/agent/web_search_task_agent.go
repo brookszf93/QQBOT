@@ -57,8 +57,7 @@ func (t *WebSearchTaskAgentTool) Execute(ctx context.Context, call agentruntime.
 	kernel := agentruntime.ReActKernel{Model: t.model}
 	systemPrompt := prompts.WebSearchSystemPrompt()
 	messages := []agentruntime.Message{{Role: "user", Content: prompts.WebSearchInstruction(query)}}
-	if t.systemPrompt != nil && t.contextMessages != nil {
-		systemPrompt = t.systemPrompt()
+	if t.contextMessages != nil {
 		messages = append(t.contextMessages(), agentruntime.Message{Role: "user", Content: prompts.WebSearchInstruction(query)})
 	}
 	var last agentruntime.RoundResult
@@ -90,33 +89,10 @@ func (t *WebSearchTaskAgentTool) Execute(ctx context.Context, call agentruntime.
 }
 
 func (t *WebSearchTaskAgentTool) taskTools() *agentruntime.ToolCatalog {
-	rawTools := agentruntime.NewToolCatalog(
+	return agentruntime.NewToolCatalog(
 		websearch.SearchWebRawTool{Service: t.service},
 		websearch.FinalizeWebSearchTool{},
 	)
-	if t.topLevelTools == nil {
-		return rawTools
-	}
-	top := t.topLevelTools()
-	if top == nil {
-		return rawTools
-	}
-	out := agentruntime.NewToolCatalog(
-		websearch.SearchWebRawTool{Service: t.service},
-		websearch.FinalizeWebSearchTool{},
-	)
-	for _, name := range []string{"enter", "back", "back_to_portal", "wait", "invoke", "search_web", "search_memory", "help"} {
-		tool, ok := top.Get(name)
-		if !ok {
-			continue
-		}
-		if name == "invoke" {
-			out.Add(webSearchInvokeTool{definition: tool.Definition(), tools: rawTools})
-			continue
-		}
-		out.Add(outOfScopeTool{inner: tool, reason: webSearchOutOfScopeReason(name)})
-	}
-	return out
 }
 
 type outOfScopeTool struct {

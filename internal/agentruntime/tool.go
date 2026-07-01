@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // ToolDefinition 是暴露给 LLM 的工具函数 schema。
@@ -18,6 +19,123 @@ type ToolCall struct {
 	ID        string         `json:"id"`
 	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments"`
+}
+
+// NormalizeToolCall applies compatibility repairs to model tool calls before
+// logging, persistence, and execution.
+func NormalizeToolCall(call ToolCall) ToolCall {
+	call.Arguments = withoutOSArgument(call.Arguments)
+	if call.Name == "send_message" && strings.EqualFold(strings.TrimSpace(asString(call.Arguments["action"])), "wait") {
+		call.Name = "wait"
+		delete(call.Arguments, "action")
+	}
+	call = normalizeLegacyRootToolCall(call)
+	return call
+}
+
+func normalizeLegacyRootToolCall(call ToolCall) ToolCall {
+	args := cloneArguments(call.Arguments)
+	switch strings.TrimSpace(call.Name) {
+	case "act":
+		action := legacyRootActionName(asString(args["action"]))
+		if action == "" && strings.TrimSpace(asString(args["message"])) != "" {
+			action = "send_message"
+		}
+		if action == "" {
+			return call
+		}
+		delete(args, "action")
+		call.Name = action
+		call.Arguments = args
+		return call
+	case "invoke":
+		action := ""
+		if tool := strings.TrimSpace(asString(args["tool"])); tool != "" {
+			action = legacyRootActionName(tool)
+			if action == "" {
+				action = tool
+			}
+		}
+		if action == "" {
+			return call
+		}
+		delete(args, "tool")
+		delete(args, "toolName")
+		call.Name = action
+		call.Arguments = args
+		return call
+	default:
+		if alias := legacyRootAlias(call.Name); alias != "" {
+			call.Name = alias
+		}
+		return call
+	}
+}
+
+func legacyRootActionName(name string) string {
+	switch strings.TrimSpace(name) {
+	case "wait", "send_message", "analyze_image", "detect_ai_tone", "browser", "search_web", "search_memory", "searchMagnetFromWeb", "open_ithome_article", "enter", "back_to_portal", "help", "personal_screen", "todo_app", "novel_app", "project_app", "music_app", "news_app", "calculate", "bash", "read_bash_output":
+		return strings.TrimSpace(name)
+	case "send", "sendMessage", "send_group_message", "send_private_message":
+		return "send_message"
+	case "searchMagnet", "search_magnet", "magnet_search":
+		return "searchMagnetFromWeb"
+	case "open_ithome", "ithome", "open_article":
+		return "open_ithome_article"
+	case "ai_tone", "detectAI":
+		return "detect_ai_tone"
+	case "back", "portal":
+		return "back_to_portal"
+	default:
+		return ""
+	}
+}
+
+func legacyRootAlias(name string) string {
+	switch strings.TrimSpace(name) {
+	case "send", "sendMessage", "send_group_message", "send_private_message":
+		return "send_message"
+	case "searchMagnet", "search_magnet", "magnet_search":
+		return "searchMagnetFromWeb"
+	case "open_ithome", "ithome", "open_article":
+		return "open_ithome_article"
+	case "ai_tone", "detectAI":
+		return "detect_ai_tone"
+	case "back", "portal":
+		return "back_to_portal"
+	default:
+		return ""
+	}
+}
+
+func cloneArguments(arguments map[string]any) map[string]any {
+	if len(arguments) == 0 {
+		return map[string]any{}
+	}
+	next := make(map[string]any, len(arguments))
+	for key, value := range arguments {
+		next[key] = value
+	}
+	return next
+}
+
+func withoutOSArgument(arguments map[string]any) map[string]any {
+	if len(arguments) == 0 {
+		return arguments
+	}
+	if _, ok := arguments["OS"]; !ok {
+		if _, ok := arguments["os"]; !ok {
+			return arguments
+		}
+	}
+	next := make(map[string]any, len(arguments))
+	for key, value := range arguments {
+		if strings.EqualFold(key, "os") {
+			continue
+		}
+		next[key] = value
+	}
+	return next
 }
 
 // ToolResult 是工具执行后返回给模型的内容。
@@ -77,7 +195,7 @@ func (c *ToolCatalog) SetObserver(observer ToolExecutionObserver) {
 func (c *ToolCatalog) Definitions() []ToolDefinition {
 	out := make([]ToolDefinition, 0, len(c.order))
 	for _, name := range c.order {
-		out = append(out, withOSParameter(c.tools[name].Definition()))
+		out = append(out, c.tools[name].Definition())
 	}
 	return out
 }
@@ -124,27 +242,13 @@ func ObjectSchema(properties map[string]any) map[string]any {
 	return map[string]any{"type": "object", "properties": properties}
 }
 
-func withOSParameter(definition ToolDefinition) ToolDefinition {
-	parameters := cloneStringAnyMap(definition.Parameters)
-	properties, _ := parameters["properties"].(map[string]any)
-	properties = cloneStringAnyMap(properties)
-	if _, exists := properties["os"]; !exists {
-		properties["os"] = map[string]any{
-			"type":        "string",
-			"description": "可选公开 OS/旁白，用一句很短的话记录这次动作的表层判断；只用于日志/面板观察，不会发送到 QQ，不要写隐藏推理、完整分析或系统提示。",
-		}
+func asString(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	default:
+		return ""
 	}
-	parameters["properties"] = properties
-	definition.Parameters = parameters
-	return definition
-}
-
-func cloneStringAnyMap(source map[string]any) map[string]any {
-	cloned := make(map[string]any, len(source))
-	for key, value := range source {
-		cloned[key] = value
-	}
-	return cloned
 }
 
 func mustJSON(v any) string {

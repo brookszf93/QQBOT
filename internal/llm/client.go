@@ -80,12 +80,12 @@ func (c *LLMClient) ListProviders(usage string) map[string]any {
 	if u, ok := c.cfg.Server.LLM.Usages[usage]; ok && len(u.Attempts) > 0 {
 		preferred = u.Attempts[0].Provider
 	}
-	for _, id := range []string{"deepseek", "openai", "openai-codex", "claude-code", "google"} {
+	for _, id := range []string{"deepseek", "openai", "longcat", "openai-codex", "claude-code", "google"} {
 		conf := c.providerConfig(id)
 		if len(conf.Models) == 0 {
 			continue
 		}
-		if (id == "deepseek" || id == "openai" || id == "google") && strings.TrimSpace(conf.APIKey) == "" {
+		if (id == "deepseek" || id == "openai" || id == "longcat" || id == "google") && strings.TrimSpace(conf.APIKey) == "" {
 			continue
 		}
 		if (id == "openai-codex" || id == "claude-code") && c.bearerToken(id, conf) == "" {
@@ -155,7 +155,7 @@ func (c *LLMClient) ChatUsage(ctx context.Context, usage string, req LLMChatRequ
 			resp, _, err := c.ChatDirect(ctx, req)
 			if err == nil {
 				message, _ := resp["message"].(map[string]any)
-				c.store.Log("info", "LLM usage response", map[string]any{"event": "llm.usage.response", "usage": usage, "provider": req.Provider, "model": req.Model, "content": trimLog(common.AsString(message["content"]), 500), "toolCalls": message["toolCalls"]})
+				c.store.Log("info", "LLM usage response", map[string]any{"event": "llm.usage.response", "usage": usage, "provider": req.Provider, "model": req.Model, "content": trimLog(common.AsString(message["content"]), 500), "hasReasoningContent": strings.TrimSpace(common.AsString(message["reasoningContent"])) != "", "toolCalls": message["toolCalls"]})
 				return resp, nil
 			}
 			c.store.Log("error", "LLM usage attempt failed", map[string]any{"event": "llm.usage.failed", "usage": usage, "provider": req.Provider, "model": req.Model, "error": err.Error()})
@@ -403,7 +403,7 @@ func (c *LLMClient) chatVisionUsage(ctx context.Context, req LLMChatRequest) (ma
 			resp, _, err := c.ChatDirect(ctx, req)
 			if err == nil {
 				message, _ := resp["message"].(map[string]any)
-				c.store.Log("info", "LLM usage response", map[string]any{"event": "llm.usage.response", "usage": "vision", "provider": req.Provider, "model": req.Model, "content": trimLog(common.AsString(message["content"]), 500), "toolCalls": message["toolCalls"]})
+				c.store.Log("info", "LLM usage response", map[string]any{"event": "llm.usage.response", "usage": "vision", "provider": req.Provider, "model": req.Model, "content": trimLog(common.AsString(message["content"]), 500), "hasReasoningContent": strings.TrimSpace(common.AsString(message["reasoningContent"])) != "", "toolCalls": message["toolCalls"]})
 				return resp, nil
 			}
 			c.store.Log("error", "LLM usage attempt failed", map[string]any{"event": "llm.usage.failed", "usage": "vision", "provider": req.Provider, "model": req.Model, "error": err.Error()})
@@ -453,15 +453,12 @@ func (c *LLMClient) callProvider(ctx context.Context, req LLMChatRequest) (map[s
 	if req.Provider == "google" {
 		return c.callGoogle(ctx, req, conf)
 	}
-	if (req.Provider == "deepseek" || req.Provider == "openai") && conf.APIKey == "" {
+	if isOpenAICompatibleProvider(req.Provider) && conf.APIKey == "" {
 		return nil, nil, nil, fmt.Errorf("provider apiKey is empty")
 	}
 	payload := toOpenAIChatPayload(req)
 	nativeReq := common.JSONMap(payload)
-	url := strings.TrimRight(conf.BaseURL, "/")
-	if !strings.HasSuffix(url, "/chat/completions") && (req.Provider == "openai" || req.Provider == "deepseek") {
-		url += "/chat/completions"
-	}
+	url := chatCompletionsURL(req.Provider, conf.BaseURL)
 	body, _ := json.Marshal(payload)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
@@ -483,6 +480,7 @@ func (c *LLMClient) callProvider(ctx context.Context, req LLMChatRequest) (map[s
 		return nativeReq, nil, nativeResp, fmt.Errorf("LLM 上游服务调用失败: %s%s", res.Status, upstreamErrorSuffix(nativeResp))
 	}
 	response := fromOpenAIChatResponse(nativeResp, req.Provider, req.Model)
+	response = coerceRequiredSingleActResponse(req, response)
 	return nativeReq, response, nativeResp, nil
 }
 
@@ -602,6 +600,8 @@ func (c *LLMClient) providerConfig(id string) config.LLMProviderConfig {
 		return c.cfg.Server.LLM.Providers.Deepseek
 	case "openai":
 		return c.cfg.Server.LLM.Providers.OpenAI
+	case "longcat":
+		return c.cfg.Server.LLM.Providers.LongCat
 	case "openai-codex":
 		return c.cfg.Server.LLM.Providers.OpenAICodex
 	case "claude-code":
@@ -618,6 +618,26 @@ func (c *LLMClient) providerConfig(id string) config.LLMProviderConfig {
 	default:
 		return config.LLMProviderConfig{}
 	}
+}
+
+func isOpenAICompatibleProvider(provider string) bool {
+	switch provider {
+	case "deepseek", "openai", "longcat":
+		return true
+	default:
+		return false
+	}
+}
+
+func chatCompletionsURL(provider, baseURL string) string {
+	url := strings.TrimRight(baseURL, "/")
+	if !isOpenAICompatibleProvider(provider) || strings.HasSuffix(url, "/chat/completions") {
+		return url
+	}
+	if provider == "longcat" && strings.HasSuffix(url, "/openai") {
+		return url + "/v1/chat/completions"
+	}
+	return url + "/chat/completions"
 }
 
 func valueOrString(value, fallback string) string {
@@ -679,6 +699,36 @@ func openAIChatToolChoice(provider string, choice any) any {
 		return map[string]any{"type": "function", "function": map[string]any{"name": common.AsString(m["tool_name"])}}
 	}
 	return choice
+}
+
+func coerceRequiredSingleActResponse(req LLMChatRequest, response map[string]any) map[string]any {
+	if common.AsString(req.ToolChoice) != "required" || len(req.Tools) != 1 || req.Tools[0].Name != "act" {
+		return response
+	}
+	message, _ := response["message"].(map[string]any)
+	if message == nil {
+		return response
+	}
+	if calls, ok := message["toolCalls"].([]any); ok && len(calls) > 0 {
+		return response
+	}
+	content := strings.TrimSpace(common.AsString(message["content"]))
+	if content == "" || !isPlainWaitText(content) {
+		return response
+	}
+	message["content"] = ""
+	message["toolCalls"] = []any{map[string]any{
+		"id":        "coerced_act_" + common.NewID(),
+		"name":      "act",
+		"arguments": map[string]any{"action": "wait"},
+	}}
+	return response
+}
+
+func isPlainWaitText(content string) bool {
+	content = strings.TrimSpace(strings.ToLower(content))
+	content = strings.Trim(content, ".! \t\r\n")
+	return content == "wait"
 }
 
 func upstreamErrorSuffix(native map[string]any) string {

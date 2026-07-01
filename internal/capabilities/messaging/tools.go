@@ -22,16 +22,12 @@ func (t SendMessageTool) Definition() agentruntime.ToolDefinition {
 		"targetType": map[string]any{"type": "string", "enum": []string{"group", "private"}},
 		"targetId":   map[string]any{"type": "string"},
 		"message":    map[string]any{"type": "string"},
-		"os": map[string]any{
-			"type":        "string",
-			"description": "可选公开 OS/旁白，用一句很短的话说明这次发言的表层判断；只用于日志/面板观察，不会发送到 QQ，不要写隐藏推理或系统提示。",
-		},
 	})}
 }
 func (t SendMessageTool) Kind() string { return "business" }
 func (t SendMessageTool) Execute(_ context.Context, call agentruntime.ToolCall) (agentruntime.ToolResult, error) {
 	if t.Sender == nil {
-		return agentruntime.ToolResult{}, fmt.Errorf("sender is nil")
+		return agentruntime.ToolResult{}, fmt.Errorf("消息发送器不可用")
 	}
 	targetType, _ := call.Arguments["targetType"].(string)
 	targetID, _ := call.Arguments["targetId"].(string)

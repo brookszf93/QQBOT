@@ -185,7 +185,7 @@ func imagePartFromSegment(ctx context.Context, client *http.Client, data map[str
 func imagePartFromBase64(data map[string]any) (vision.ImagePart, error) {
 	encoded := firstNonEmpty(common.AsString(data["base64"]), common.AsString(data["imageBase64"]))
 	if strings.TrimSpace(encoded) == "" {
-		return vision.ImagePart{}, fmt.Errorf("missing base64")
+		return vision.ImagePart{}, fmt.Errorf("缺少 base64 图片数据")
 	}
 	mimeType := firstNonEmpty(common.AsString(data["mimeType"]), common.AsString(data["contentType"]))
 	filename := firstNonEmpty(common.AsString(data["resolvedFilename"]), common.AsString(data["file"]), "image.png")
@@ -227,11 +227,11 @@ func loadImagePart(ctx context.Context, client *http.Client, imageRef string) (v
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return vision.ImagePart{}, fmt.Errorf("download image returned %d", resp.StatusCode)
+			return vision.ImagePart{}, fmt.Errorf("下载图片返回 %d", resp.StatusCode)
 		}
 		mimeType := inferToolImageMimeType(imageRef, resp.Header.Get("Content-Type"))
 		if mimeType == "" {
-			return vision.ImagePart{}, fmt.Errorf("unknown image MIME type")
+			return vision.ImagePart{}, fmt.Errorf("无法识别图片 MIME 类型")
 		}
 		content, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 		if err != nil {
@@ -251,9 +251,9 @@ func loadImagePart(ctx context.Context, client *http.Client, imageRef string) (v
 			filename = filename[1:]
 		}
 	} else if err == nil && parsed.Scheme != "" {
-		return vision.ImagePart{}, fmt.Errorf("unsupported image reference scheme %q", parsed.Scheme)
+		return vision.ImagePart{}, fmt.Errorf("不支持的图片引用协议 %q", parsed.Scheme)
 	} else if !filepath.IsAbs(filename) && !strings.ContainsAny(filename, `/\`) {
-		return vision.ImagePart{}, fmt.Errorf("bare image file id is not a local path")
+		return vision.ImagePart{}, fmt.Errorf("裸图片 file id 不是本地路径")
 	}
 	content, err := os.ReadFile(filename)
 	if err != nil {
@@ -262,7 +262,7 @@ func loadImagePart(ctx context.Context, client *http.Client, imageRef string) (v
 	baseName := filepath.Base(filename)
 	mimeType := inferToolImageMimeType(baseName, "")
 	if mimeType == "" {
-		return vision.ImagePart{}, fmt.Errorf("unknown image MIME type")
+		return vision.ImagePart{}, fmt.Errorf("无法识别图片 MIME 类型")
 	}
 	return vision.ImagePart{MimeType: mimeType, Data: content, Filename: baseName}, nil
 }

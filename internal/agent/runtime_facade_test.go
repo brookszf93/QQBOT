@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -39,14 +41,14 @@ func TestStoryBatchScheduleDecision(t *testing.T) {
 
 func TestRenderStoryLedgerBatchIncludesCompleteLinearContext(t *testing.T) {
 	rendered := renderStoryLedgerBatch([]db.StoryLedgerItem{
-		{Seq: 10, Role: "user", Content: "<qq_message>第一条</qq_message>"},
-		{Seq: 11, Role: "user", Content: "<qq_message>第二条</qq_message>"},
+		{Seq: 10, Role: "user", Content: "<qq_message>绗竴鏉?/qq_message>"},
+		{Seq: 11, Role: "user", Content: "<qq_message>绗簩鏉?/qq_message>"},
 	})
 
 	for _, expected := range []string{
 		"<ledger_batch>",
-		"[10] user\n<qq_message>第一条</qq_message>",
-		"[11] user\n<qq_message>第二条</qq_message>",
+		"[10] user\n<qq_message>绗竴鏉?/qq_message>",
+		"[11] user\n<qq_message>绗簩鏉?/qq_message>",
 		"</ledger_batch>",
 	} {
 		if !strings.Contains(rendered, expected) {
@@ -74,13 +76,43 @@ func TestWaitExecutionIsNotPersistedInModelContext(t *testing.T) {
 	message := agentruntime.Message{Role: "assistant", ToolCalls: []agentruntime.ToolCall{{ID: "wait-1", Name: "wait"}}}
 	executions := []agentruntime.ToolExecution{{
 		Call:   message.ToolCalls[0],
-		Result: agentruntime.ToolResult{Kind: "control", Content: "休息结束了"},
+		Result: agentruntime.ToolResult{Kind: "control", Content: "wait completed"},
 	}}
 	if shouldPersistAssistant(message, executions) {
 		t.Fatal("wait assistant call must not enter persistent model context")
 	}
 	if shouldPersistToolResult(executions[0]) {
 		t.Fatal("wait tool output must not enter persistent model context")
+	}
+}
+
+func TestUnavailableToolExecutionIsNotPersistedInModelContext(t *testing.T) {
+	execution := agentruntime.ToolExecution{
+		Call:   agentruntime.ToolCall{ID: "call-1", Name: "act", Arguments: map[string]any{"action": "novel_app"}},
+		Result: agentruntime.ToolResult{Kind: "business", Content: `{"ok":false,"error":"INVOKE_TOOL_NOT_AVAILABLE"}`},
+	}
+	if shouldPersistToolResult(execution) {
+		t.Fatal("unavailable tool errors should not teach the model a stale capability map")
+	}
+}
+
+func TestSuccessfulActEnterExecutionIsPersistedInModelContext(t *testing.T) {
+	execution := agentruntime.ToolExecution{
+		Call:   agentruntime.ToolCall{ID: "call-1", Name: "act", Arguments: map[string]any{"action": "enter", "query": "novel"}},
+		Result: agentruntime.ToolResult{Kind: "control", Content: `{"ok":true,"enteredApp":"novel","screenResult":"{\"ok\":true}"}`},
+	}
+	if !shouldPersistToolResult(execution) {
+		t.Fatal("successful enter should be visible to the next model round")
+	}
+}
+
+func TestRootToolsExposeConcreteRootTools(t *testing.T) {
+	tools := rootTools(&config.Config{}, agentruntime.NewToolCatalog(sendMessageTool{}), roottools.NewSession(nil), NewEventQueue())
+	definitions := tools.Definitions()
+	names := definitionNamesForTest(definitions)
+	want := []string{"enter", "back_to_portal", "help", "wait", "send_message"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("root tools should expose concrete tools, got %#v", names)
 	}
 }
 
@@ -116,7 +148,7 @@ func TestExternalEventSuppressesSameBatchSelfContinuation(t *testing.T) {
 
 func TestSelfContinuationReminderIsEphemeral(t *testing.T) {
 	runtime := &AgentRuntime{
-		rootMessages:      []agentruntime.Message{{Role: "user", Content: "真实上下文"}},
+		rootMessages:      []agentruntime.Message{{Role: "user", Content: "real context"}},
 		autonomousPending: true,
 	}
 	messages, autonomous := runtime.rootRoundMessages()
@@ -157,12 +189,54 @@ func TestRootToolSchemaStaysStableAcrossAppTransitions(t *testing.T) {
 	}
 }
 
+type runtimeFacadeTestTool struct {
+	name string
+}
+
+func (t runtimeFacadeTestTool) Definition() agentruntime.ToolDefinition {
+	return agentruntime.ToolDefinition{Name: t.name, Description: "test tool", Parameters: agentruntime.ObjectSchema(map[string]any{})}
+}
+
+func (runtimeFacadeTestTool) Kind() string { return "business" }
+
+func (runtimeFacadeTestTool) Execute(context.Context, agentruntime.ToolCall) (agentruntime.ToolResult, error) {
+	return agentruntime.ToolResult{Kind: "business", Content: `{"ok":true}`}, nil
+}
+
+func TestDetectAIToneIsAlwaysAvailable(t *testing.T) {
+	cfg := &config.Config{}
+	business := agentruntime.NewToolCatalog(runtimeFacadeTestTool{name: "detect_ai_tone"})
+	session := roottools.NewSession([]string{"1001"})
+	events := NewEventQueue()
+
+	result, err := rootTools(cfg, business, session, events).Execute(context.Background(), agentruntime.ToolCall{
+		ID:        "detect-1",
+		Name:      "detect_ai_tone",
+		Arguments: map[string]any{"text": "娴嬭瘯"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(result.Content, "INVOKE_TOOL_NOT_AVAILABLE") {
+		t.Fatalf("detect_ai_tone should be available in main state: %s", result.Content)
+	}
+	if !strings.Contains(result.Content, `"ok":true`) {
+		t.Fatalf("unexpected result: %s", result.Content)
+	}
+}
+
 func TestToolSideEffectClassification(t *testing.T) {
 	if !toolCallHasSideEffect(agentruntime.ToolCall{Name: "invoke", Arguments: map[string]any{"tool": "send_message"}}) {
 		t.Fatal("send_message must be protected as side-effecting")
 	}
 	if !toolCallHasSideEffect(agentruntime.ToolCall{Name: "bash"}) {
 		t.Fatal("bash must be protected as side-effecting")
+	}
+	if !toolCallHasSideEffect(agentruntime.ToolCall{Name: "act", Arguments: map[string]any{"action": "novel_app", "action_text": "create_project"}}) {
+		t.Fatal("novel project creation must be protected as side-effecting")
+	}
+	if toolCallHasSideEffect(agentruntime.ToolCall{Name: "act", Arguments: map[string]any{"action": "novel_app", "action_text": "screen"}}) {
+		t.Fatal("novel screen should remain read-only")
 	}
 	if toolCallHasSideEffect(agentruntime.ToolCall{Name: "search_web"}) {
 		t.Fatal("read-only web search should be replayable")
@@ -175,13 +249,26 @@ func TestShouldStopAfterSuccessfulSendMessage(t *testing.T) {
 			Name: "invoke",
 			Arguments: map[string]any{
 				"tool":      "send_message",
-				"arguments": map[string]any{"message": "继续看下一章"},
+				"arguments": map[string]any{"message": "next"},
 			},
 		},
 		Result: agentruntime.ToolResult{Kind: "business", Content: `{"messageId":1}`},
 	}}
 	if shouldContinueAfterTool(executions) {
 		t.Fatal("successful send_message must end the round until a new external event arrives")
+	}
+}
+
+func TestShouldStopAfterPersonalAppWrite(t *testing.T) {
+	executions := []agentruntime.ToolExecution{{
+		Call: agentruntime.ToolCall{
+			Name:      "novel_app",
+			Arguments: map[string]any{"action_text": "create_project", "title": "闅忕瑪"},
+		},
+		Result: agentruntime.ToolResult{Kind: "business", Content: `{"ok":true,"project":{"id":"novel-1"}}`},
+	}}
+	if shouldContinueAfterTool(executions) {
+		t.Fatal("successful personal app write must end the round until a new external event arrives")
 	}
 }
 
@@ -195,13 +282,55 @@ func TestShouldContinueAfterFailedSendMessage(t *testing.T) {
 	}
 }
 
+func TestShouldStopAfterAIToneBlockedSendMessage(t *testing.T) {
+	executions := []agentruntime.ToolExecution{{
+		Call:   agentruntime.ToolCall{Name: "send_message"},
+		Result: agentruntime.ToolResult{Kind: "business", Content: `{"ok":false,"error":"AI_TONE_TOO_HIGH","prob":0.8}`},
+	}}
+	if shouldContinueAfterTool(executions) {
+		t.Fatal("AI tone blocked send_message must stop instead of asking the model to report/retry")
+	}
+	if shouldPersistToolResult(executions[0]) {
+		t.Fatal("AI tone blocked result should stay out of chat context")
+	}
+	assistant := assistantForPersistence(agentruntime.Message{
+		Role:      "assistant",
+		ToolCalls: []agentruntime.ToolCall{{ID: executions[0].Call.ID, Name: "send_message"}},
+	}, executions)
+	if len(assistant.ToolCalls) != 0 {
+		t.Fatalf("AI tone blocked assistant tool call should stay out of chat context: %#v", assistant)
+	}
+}
+
 func TestShouldStopAfterWait(t *testing.T) {
 	executions := []agentruntime.ToolExecution{{
 		Call:   agentruntime.ToolCall{Name: "wait"},
-		Result: agentruntime.ToolResult{Kind: "control", Content: "休息结束了"},
+		Result: agentruntime.ToolResult{Kind: "control", Content: "wait completed"},
 	}}
 	if shouldContinueAfterTool(executions) {
 		t.Fatal("wait must suspend the autonomous loop")
+	}
+}
+
+func TestShouldStopAfterActWait(t *testing.T) {
+	executions := []agentruntime.ToolExecution{{
+		Call:   agentruntime.ToolCall{Name: "act", Arguments: map[string]any{"action": "wait"}},
+		Result: agentruntime.ToolResult{Kind: "control", Content: "wait completed"},
+	}}
+	if shouldContinueAfterTool(executions) {
+		t.Fatal("act(action=wait) must suspend the autonomous loop")
+	}
+}
+
+func TestPlainWaitAssistantIsNotPersisted(t *testing.T) {
+	if !isPlainWaitContent("wait") || !isPlainWaitContent(" wait.") {
+		t.Fatal("plain wait text should be treated as an idle action")
+	}
+	if shouldPersistAssistant(agentruntime.Message{Role: "assistant", Content: "wait"}, nil) {
+		t.Fatal("plain wait assistant content should not pollute chat history")
+	}
+	if shouldPersistAssistant(agentruntime.Message{Role: "assistant", Content: "I will wait a bit"}, nil) {
+		t.Fatal("plain assistant content without a tool call was not sent and must not pollute chat history")
 	}
 }
 
@@ -225,26 +354,18 @@ func TestShouldStopAfterUnknownToolFailure(t *testing.T) {
 	}
 }
 
-func TestMigrateParallelRootMessagesRemovesLegacyNavigationOnly(t *testing.T) {
-	messages := []agentruntime.Message{
-		{Role: "user", Content: "<system_reminder>\n你进入了 QQ 群 1001 节点\n</system_reminder>"},
-		{Role: "user", Content: "<system_reminder>\n[跨状态通知]\nQQ 群 1002 有消息\n</system_reminder>"},
-		{Role: "user", Content: `<qq_message target_type="group" target_id="1001">alice: hello</qq_message>`},
-		{Role: "user", Content: "<conversation_summary>保留摘要</conversation_summary>"},
+func definitionNamesForTest(definitions []agentruntime.ToolDefinition) []string {
+	names := make([]string, 0, len(definitions))
+	for _, definition := range definitions {
+		names = append(names, definition.Name)
 	}
-	migrated := migrateParallelRootMessages(messages)
-	if len(migrated) != 2 {
-		t.Fatalf("unexpected migrated messages: %#v", migrated)
-	}
-	if !strings.Contains(migrated[0].Content, "target_id") || !strings.Contains(migrated[1].Content, "conversation_summary") {
-		t.Fatalf("real context should be preserved: %#v", migrated)
-	}
+	return names
 }
 
 func TestLatestStoryRecallQueryUsesNewestQQMessage(t *testing.T) {
 	messages := []agentruntime.Message{
 		{Role: "user", Content: `<qq_message target_type="group" target_id="1001">alice (1): old topic</qq_message>`},
-		{Role: "user", Content: "<system_reminder>当前时间</system_reminder>"},
+		{Role: "user", Content: "<system_reminder>褰撳墠鏃堕棿</system_reminder>"},
 		{Role: "user", Content: `<qq_message target_type="private" target_id="2">
 bob (2):
 new topic

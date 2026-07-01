@@ -7,7 +7,7 @@ import (
 
 func TestSessionUsesParallelMessagingTools(t *testing.T) {
 	session := NewSession([]string{"1001", "1002"})
-	for _, tool := range []string{"send_message", "searchMagnetFromWeb", "open_ithome_article"} {
+	for _, tool := range []string{"wait", "send_message", "analyze_image", "detect_ai_tone", "browser", "search_web", "searchMagnetFromWeb", "open_ithome_article", "personal_screen", "novel_app"} {
 		if !session.IsToolAvailable(tool) {
 			t.Fatalf("main event stream should expose %s", tool)
 		}
@@ -55,6 +55,33 @@ func TestSessionKeepsAppsIsolated(t *testing.T) {
 	}
 	if !session.IsToolAvailable("send_message") {
 		t.Fatal("leaving the app should restore parallel messaging tools")
+	}
+}
+
+func TestSessionPersonalAppsExposeScopedTools(t *testing.T) {
+	session := NewSession([]string{"1001"})
+	if result := session.EnterApp("novel"); result["ok"] != true {
+		t.Fatalf("enter novel app failed: %#v", result)
+	}
+	if result := session.EnterApp("novel"); result["ok"] != true || result["alreadyInApp"] != true {
+		t.Fatalf("re-entering same app should be idempotent: %#v", result)
+	}
+	for _, tool := range []string{"personal_screen", "novel_app", "project_app", "todo_app"} {
+		if !session.IsToolAvailable(tool) {
+			t.Fatalf("novel app should expose %s", tool)
+		}
+	}
+	if session.IsToolAvailable("send_message") {
+		t.Fatal("personal apps should not expose send_message directly")
+	}
+	if result := session.BackToPortal(); result["ok"] != true {
+		t.Fatalf("back_to_portal failed: %#v", result)
+	}
+	if result := session.EnterApp("music"); result["ok"] != true {
+		t.Fatalf("enter music app failed: %#v", result)
+	}
+	if !session.IsToolAvailable("music_app") || session.IsToolAvailable("novel_app") {
+		t.Fatal("music app should expose only music workspace tools")
 	}
 }
 

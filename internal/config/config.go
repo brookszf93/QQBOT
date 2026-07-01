@@ -152,6 +152,7 @@ type OAuthProviderConfig struct {
 type LLMProvidersConfig struct {
 	Deepseek    LLMProviderConfig `yaml:"deepseek"`
 	OpenAI      LLMProviderConfig `yaml:"openai"`
+	LongCat     LLMProviderConfig `yaml:"longcat"`
 	OpenAICodex LLMProviderConfig `yaml:"openaiCodex"`
 	ClaudeCode  LLMProviderConfig `yaml:"claudeCode"`
 	Google      LLMProviderConfig `yaml:"google"`

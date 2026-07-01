@@ -87,7 +87,7 @@ func (s *Session) SetTarget(target ChatTarget) {
 
 func (s *Session) Enter(stateID string) map[string]any {
 	stateID = normalizeStateID(stateID)
-	if stateID == "calc" || stateID == "terminal" {
+	if isAppID(stateID) {
 		return s.EnterApp(stateID)
 	}
 	return map[string]any{"ok": false, "error": "ENTER_TARGET_NOT_AVAILABLE", "id": stateID, "message": "聊天、私聊和新闻已并行接入，不需要 enter。"}
@@ -109,14 +109,36 @@ func (s *Session) EnterApp(appID string) map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	appID = strings.TrimSpace(appID)
-	if appID != "calc" && appID != "terminal" {
+	if !isAppID(appID) {
 		return map[string]any{"ok": false, "error": "APP_NOT_FOUND", "id": appID}
 	}
 	if s.CurrentApp != "" {
+		if s.CurrentApp == appID {
+			return map[string]any{"ok": true, "type": "app", "enteredApp": appID, "alreadyInApp": true, "message": "已经在 " + appID + " App 里；下一步请调用 personal_screen 或 " + appIDToolName(appID) + "。"}
+		}
 		return map[string]any{"ok": false, "error": "ALREADY_IN_APP", "message": fmt.Sprintf("你已经在 App %q 里。先 back_to_portal 退出，再进入 %q。", s.CurrentApp, appID)}
 	}
 	s.CurrentApp = appID
 	return map[string]any{"ok": true, "type": "app", "enteredApp": appID, "message": "已进入 " + appID + " App。调用 help 查看可用工具。"}
+}
+
+func appIDToolName(appID string) string {
+	switch appID {
+	case "todo":
+		return "todo_app"
+	case "novel":
+		return "novel_app"
+	case "projects":
+		return "project_app"
+	case "music":
+		return "music_app"
+	case "news":
+		return "news_app"
+	case "browser":
+		return "browser"
+	default:
+		return "help"
+	}
 }
 
 func (s *Session) BackToPortal() map[string]any {
@@ -195,15 +217,15 @@ func (s *Session) State() string {
 	return s.StateID
 }
 
+func (s *Session) App() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.CurrentApp
+}
+
 func (s *Session) AvailableTools() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.CurrentApp == "calc" {
-		return []string{"calculate"}
-	}
-	if s.CurrentApp == "terminal" {
-		return []string{"bash", "read_bash_output"}
-	}
 	return s.availableToolsLocked(s.StateID)
 }
 
@@ -231,6 +253,7 @@ func (s *Session) Snapshot() map[string]any {
 		"focusedStateId":          s.StateID,
 		"focusedStateDisplayName": s.displayNameLocked(s.StateID),
 		"focusedStateDescription": s.descriptionLocked(s.StateID),
+		"currentApp":              s.CurrentApp,
 		"stateStack":              stack,
 		"children":                children,
 		"availableInvokeTools":    s.availableToolsLockedForSnapshot(),
@@ -472,13 +495,25 @@ func (s *Session) descriptionLocked(stateID string) string {
 }
 
 func (s *Session) availableToolsLocked(stateID string) []string {
-	if s.CurrentApp == "calc" {
+	switch s.CurrentApp {
+	case "calc":
 		return []string{"calculate"}
-	}
-	if s.CurrentApp == "terminal" {
+	case "terminal":
 		return []string{"bash", "read_bash_output"}
+	case "todo":
+		return []string{"personal_screen", "activity_app", "todo_app"}
+	case "novel":
+		return []string{"personal_screen", "activity_app", "novel_app", "project_app", "todo_app"}
+	case "projects":
+		return []string{"personal_screen", "activity_app", "project_app", "todo_app"}
+	case "browser":
+		return []string{"personal_screen", "activity_app", "browser", "project_app"}
+	case "music":
+		return []string{"personal_screen", "activity_app", "music_app"}
+	case "news":
+		return []string{"personal_screen", "activity_app", "news_app", "open_ithome_article", "project_app"}
 	}
-	return []string{"send_message", "searchMagnetFromWeb", "open_ithome_article"}
+	return []string{"wait", "send_message", "analyze_image", "detect_ai_tone", "browser", "search_web", "search_memory", "searchMagnetFromWeb", "open_ithome_article", "personal_screen", "activity_app", "todo_app", "novel_app", "project_app", "music_app", "news_app"}
 }
 
 func (s *Session) availableToolsLockedForSnapshot() []string {
@@ -607,6 +642,15 @@ func normalizeStateID(stateID string) string {
 		return stateID
 	default:
 		return stateID
+	}
+}
+
+func isAppID(appID string) bool {
+	switch strings.TrimSpace(appID) {
+	case "calc", "terminal", "todo", "novel", "projects", "browser", "music", "news":
+		return true
+	default:
+		return false
 	}
 }
 

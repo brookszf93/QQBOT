@@ -5,6 +5,7 @@ import (
 	"QqBot/internal/agentruntime"
 	"QqBot/internal/capabilities/contextsummary"
 	"QqBot/internal/capabilities/messaging"
+	"QqBot/internal/capabilities/personalapp"
 	"QqBot/internal/capabilities/terminal"
 	"QqBot/internal/common"
 	"QqBot/internal/config"
@@ -95,41 +96,43 @@ func wakeTriggersRootRound(reason string) bool {
 // 它维护仪表盘状态，并从进入的消息中创建轻量 Story 记录；
 // 更完整的 internal/agent 运行时可用于后续更深层的接线。
 type AgentRuntime struct {
-	cfg                *config.Config
-	store              *db.Store
-	events             *EventQueue
-	llm                *llm.LLMClient
-	rootKernel         agentruntime.ReActKernel
-	storyKernel        agentruntime.ReActKernel
-	summarizer         contextsummary.Operation
-	rootTools          *agentruntime.ToolCatalog
-	storyTools         *agentruntime.ToolCatalog
-	session            *roottools.Session
-	rootMessages       []agentruntime.Message
-	storyMessages      []agentruntime.Message
-	mu                 sync.Mutex
-	initialized        bool
-	loopState          string
-	lastError          *RuntimeError
-	lastActivity       *time.Time
-	contextItems       []DashboardContextItem
-	lastToolCall       *DashboardToolCall
-	lastToolResult     *string
-	lastLlmCall        *DashboardLlmCall
-	storyLastSeq       int
-	terminal           *terminal.Service
-	lastCompaction     *time.Time
-	lastWakeReminderAt *time.Time
-	lastStoryRecallAt  int
-	lastStoryRecallKey string
-	injectedStoryIDs   map[string]bool
-	storyBatchRunning  bool
-	storyIdleTimer     *time.Timer
-	storyRecallRunning bool
-	autonomousRounds   int
-	autonomousPending  bool
-	autonomousTimer    *time.Timer
-	autonomousUntil    *time.Time
+	cfg                 *config.Config
+	store               *db.Store
+	events              *EventQueue
+	llm                 *llm.LLMClient
+	rootKernel          agentruntime.ReActKernel
+	storyKernel         agentruntime.ReActKernel
+	summarizer          contextsummary.Operation
+	rootTools           *agentruntime.ToolCatalog
+	storyTools          *agentruntime.ToolCatalog
+	session             *roottools.Session
+	rootMessages        []agentruntime.Message
+	storyMessages       []agentruntime.Message
+	mu                  sync.Mutex
+	initialized         bool
+	loopState           string
+	lastError           *RuntimeError
+	lastActivity        *time.Time
+	contextItems        []DashboardContextItem
+	lastToolCall        *DashboardToolCall
+	lastToolResult      *string
+	lastLlmCall         *DashboardLlmCall
+	storyLastSeq        int
+	terminal            *terminal.Service
+	personal            *personalapp.Service
+	lastCompaction      *time.Time
+	lastWakeReminderAt  *time.Time
+	lastStoryRecallAt   int
+	lastStoryRecallKey  string
+	injectedStoryIDs    map[string]bool
+	lastReadOnlyToolSig string
+	storyBatchRunning   bool
+	storyIdleTimer      *time.Timer
+	storyRecallRunning  bool
+	autonomousRounds    int
+	autonomousPending   bool
+	autonomousTimer     *time.Timer
+	autonomousUntil     *time.Time
 }
 
 type RuntimeError struct {
@@ -174,6 +177,7 @@ func NewAgentRuntime(cfg *config.Config, store *db.Store, events *EventQueue, ll
 		ReadOutputMaxSize: cfg.Server.Agent.Terminal.ReadOutputMaxSize,
 		Shell:             cfg.Server.Agent.Terminal.Shell,
 	}, store)
+	personalService := personalapp.NewService(personalAppsRoot(cfg))
 	session := roottools.NewSession(cfg.Server.Napcat.ListenGroupIDs)
 	runtime := &AgentRuntime{
 		cfg:              cfg,
@@ -183,15 +187,16 @@ func NewAgentRuntime(cfg *config.Config, store *db.Store, events *EventQueue, ll
 		rootKernel:       agentruntime.ReActKernel{Model: rootModel},
 		storyKernel:      agentruntime.ReActKernel{Model: storyModel},
 		summarizer:       contextsummary.Operation{Model: summarizerModel},
-		rootTools:        buildBusinessTools(cfg, store, sender, terminalService, llmClient),
+		rootTools:        buildBusinessTools(cfg, store, sender, terminalService, llmClient, personalService),
 		storyTools:       buildStoryTools(cfg, store),
 		session:          session,
 		terminal:         terminalService,
+		personal:         personalService,
 		loopState:        "starting",
 		injectedStoryIDs: map[string]bool{},
 	}
 	if snapshot, ok := store.AgentRuntimeSnapshot(); ok {
-		runtime.rootMessages = migrateParallelRootMessages(snapshot.RootMessages)
+		runtime.rootMessages = snapshot.RootMessages
 		runtime.storyMessages = snapshot.StoryMessages
 		runtime.storyLastSeq = snapshot.StoryLastSeq
 		runtime.session.Restore(snapshot.Session)
@@ -228,25 +233,8 @@ func NewAgentRuntime(cfg *config.Config, store *db.Store, events *EventQueue, ll
 	return runtime
 }
 
-func migrateParallelRootMessages(messages []agentruntime.Message) []agentruntime.Message {
-	out := make([]agentruntime.Message, 0, len(messages))
-	for _, message := range messages {
-		content := strings.TrimSpace(message.Content)
-		if message.Role == "user" && isLegacyNavigationReminder(content) {
-			continue
-		}
-		out = append(out, message)
-	}
-	return out
-}
-
-func isLegacyNavigationReminder(content string) bool {
-	return strings.Contains(content, "[跨状态通知]") ||
-		strings.Contains(content, "你已进入 QQ 群聊节点") ||
-		strings.Contains(content, "你已进入 QQ 私聊节点") ||
-		(strings.HasPrefix(content, "<system_reminder>") &&
-			strings.Contains(content, "你进入了 ") &&
-			strings.Contains(content, " 节点"))
+func personalAppsRoot(_ *config.Config) string {
+	return "data/personal-apps"
 }
 
 func (a *AgentRuntime) Start(ctx context.Context) {
@@ -435,7 +423,7 @@ func (a *AgentRuntime) runRootRound() bool {
 	messages, autonomous := a.rootRoundMessages()
 	tools := rootTools(a.cfg, a.rootTools, a.session, a.events)
 	tools.SetObserver(a)
-	a.store.Log("info", "Root LLM round start", map[string]any{"event": "agent.root.llm.start", "round": 1, "messageCount": len(messages), "state": a.session.State(), "availableTools": a.session.AvailableTools(), "autonomous": autonomous})
+	a.store.Log("info", "Root LLM round start", map[string]any{"event": "agent.root.llm.start", "round": 1, "messageCount": len(messages), "state": a.session.State(), "currentApp": a.session.App(), "exposedTools": toolDefinitionNames(tools.Definitions()), "availableActions": a.session.AvailableTools(), "autonomous": autonomous})
 	result, err := a.rootKernel.RunRound(context.Background(), agentruntime.RoundInput{
 		SystemPrompt: createSystemPrompt(a.cfg),
 		Messages:     messages,
@@ -451,14 +439,28 @@ func (a *AgentRuntime) runRootRound() bool {
 	if staleRound {
 		a.store.Log("info", "Root LLM round marked stale", map[string]any{"event": "agent.root.llm.stale", "pendingEventCount": a.events.Count()})
 	}
-	a.store.Log("info", "Root LLM response", map[string]any{"event": "agent.root.llm.response", "round": 1, "provider": result.Completion.Provider, "model": result.Completion.Model, "assistant": trimPreview(result.Assistant.Content, 500), "toolCalls": toolCallNames(result.Assistant.ToolCalls), "reasoningCaptured": strings.TrimSpace(result.Assistant.ReasoningContent) != ""})
+	a.store.Log("info", "Root LLM response", map[string]any{
+		"event":            "agent.root.llm.response",
+		"round":            1,
+		"provider":         result.Completion.Provider,
+		"model":            result.Completion.Model,
+		"assistant":        trimPreview(result.Assistant.Content, 500),
+		"reasoningContent": trimPreview(result.Assistant.ReasoningContent, 1000),
+		"toolCalls":        toolCallNames(result.Assistant.ToolCalls),
+	})
 	a.appendRootRoundStack(result)
 	if shouldPersistAssistant(result.Assistant, result.ToolExecutions) {
 		a.appendRootMessage(assistantForPersistence(result.Assistant, result.ToolExecutions))
 		a.appendContext(contextItem("llm_message", "assistant", result.Assistant.Content))
 	}
 	for _, execution := range result.ToolExecutions {
-		a.store.Log("info", "Root tool executed", map[string]any{"event": "agent.root.tool.executed", "tool": execution.Call.Name, "arguments": execution.Call.Arguments, "result": trimPreview(execution.Result.Content, 500)})
+		logMetadata := map[string]any{"event": "agent.root.tool.executed", "tool": execution.Call.Name}
+		if message := toolCallMessage(execution.Call); message != "" {
+			logMetadata["messagePreview"] = trimPreview(message, 240)
+		}
+		logMetadata["arguments"] = execution.Call.Arguments
+		logMetadata["result"] = trimPreview(execution.Result.Content, 500)
+		a.store.Log("info", "Root tool executed", logMetadata)
 		if shouldPersistToolResult(execution) {
 			a.appendRootMessage(agentruntime.Message{Role: "tool", ToolCallID: execution.Call.ID, Content: execution.Result.Content})
 		}
@@ -474,7 +476,7 @@ func (a *AgentRuntime) runRootRound() bool {
 	}
 	a.recordLLMCall(result.Completion)
 	a.maybeCompactRoot(result.Completion)
-	if shouldContinueAfterTool(result.ToolExecutions) {
+	if a.shouldContinueAfterTool(result.ToolExecutions) {
 		return true
 	}
 	if len(result.ToolExecutions) == 0 && strings.TrimSpace(result.Assistant.Content) != "" {
@@ -534,12 +536,86 @@ func toolCallHasSideEffect(call agentruntime.ToolCall) bool {
 	switch name {
 	case "send_message", "bash", "browser", "searchMagnetFromWeb":
 		return true
+	case "todo_app", "novel_app", "project_app", "music_app", "news_app":
+		return personalAppActionHasSideEffect(name, invocationArguments(call.Arguments))
 	default:
 		return false
 	}
 }
 
+func personalAppActionHasSideEffect(tool string, args map[string]any) bool {
+	action := strings.TrimSpace(common.AsString(args["action_text"]))
+	if action == "" {
+		action = strings.TrimSpace(common.AsString(args["subaction"]))
+	}
+	if action == "" {
+		action = strings.TrimSpace(common.AsString(args["operation"]))
+	}
+	if action == "" {
+		action = strings.TrimSpace(common.AsString(args["op"]))
+	}
+	if action == "" {
+		action = strings.TrimSpace(common.AsString(args["action"]))
+	}
+	switch tool {
+	case "todo_app":
+		switch action {
+		case "add", "update", "complete", "remove":
+			return true
+		}
+	case "novel_app":
+		switch action {
+		case "create_project", "append_draft", "append_note", "update_outline", "add_todo", "complete_todo":
+			return true
+		}
+	case "project_app":
+		switch action {
+		case "create", "append_note", "append_journal":
+			return true
+		}
+	case "music_app":
+		switch action {
+		case "add", "set_current", "save_impression", "finish", "drop":
+			return true
+		}
+	case "news_app":
+		return action == "save_takeaway"
+	}
+	return false
+}
+
+func toolCallMessage(call agentruntime.ToolCall) string {
+	if resolvedToolCallName(call) != "send_message" {
+		return ""
+	}
+	args := call.Arguments
+	if call.Name == "invoke" {
+		args = invocationArguments(call.Arguments)
+	}
+	return strings.TrimSpace(common.AsString(args["message"]))
+}
+
 func resolvedToolCallName(call agentruntime.ToolCall) string {
+	if call.Name == "act" {
+		if action := strings.TrimSpace(common.AsString(call.Arguments["action"])); action != "" {
+			switch action {
+			case "send", "sendMessage", "send_group_message", "send_private_message":
+				return "send_message"
+			case "searchMagnet", "search_magnet", "magnet_search":
+				return "searchMagnetFromWeb"
+			case "open_ithome", "ithome", "open_article":
+				return "open_ithome_article"
+			case "ai_tone", "detectAI":
+				return "detect_ai_tone"
+			default:
+				return action
+			}
+		}
+		if strings.TrimSpace(common.AsString(call.Arguments["message"])) != "" {
+			return "send_message"
+		}
+		return call.Name
+	}
 	if call.Name != "invoke" {
 		return call.Name
 	}
@@ -681,7 +757,7 @@ func (a *AgentRuntime) resetAutonomousRounds() {
 
 func hasToolExecution(executions []agentruntime.ToolExecution, name string) bool {
 	for _, execution := range executions {
-		if execution.Call.Name == name {
+		if resolvedToolCallName(execution.Call) == name {
 			return true
 		}
 	}
@@ -694,6 +770,12 @@ func shouldContinueAfterTool(executions []agentruntime.ToolExecution) bool {
 	}
 	allSuccessfulSends := true
 	for _, execution := range executions {
+		if isPersonalAppTool(resolvedToolCallName(execution.Call)) && toolResultHasError(execution.Result.Content) {
+			return false
+		}
+		if personalAppActionHasSideEffect(resolvedToolCallName(execution.Call), invocationArguments(execution.Call.Arguments)) && !toolResultHasError(execution.Result.Content) {
+			return false
+		}
 		if resolvedToolCallName(execution.Call) != "send_message" || toolResultHasError(execution.Result.Content) {
 			allSuccessfulSends = false
 		}
@@ -702,7 +784,7 @@ func shouldContinueAfterTool(executions []agentruntime.ToolExecution) bool {
 			continue
 		}
 		switch common.AsString(payload["error"]) {
-		case "UNKNOWN_TOOL", "INVOKE_TOOL_NOT_FOUND":
+		case "AI_TONE_TOO_HIGH", "UNKNOWN_TOOL", "INVOKE_TOOL_NOT_FOUND":
 			return false
 		}
 	}
@@ -712,30 +794,120 @@ func shouldContinueAfterTool(executions []agentruntime.ToolExecution) bool {
 	return true
 }
 
+func (a *AgentRuntime) shouldContinueAfterTool(executions []agentruntime.ToolExecution) bool {
+	if !shouldContinueAfterTool(executions) {
+		a.setLastReadOnlyToolSignature("")
+		return false
+	}
+	sig, ok := readOnlyPersonalAppSignature(executions)
+	if !ok {
+		a.setLastReadOnlyToolSignature("")
+		return true
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.lastReadOnlyToolSig == sig {
+		return false
+	}
+	a.lastReadOnlyToolSig = sig
+	return true
+}
+
+func (a *AgentRuntime) setLastReadOnlyToolSignature(sig string) {
+	a.mu.Lock()
+	a.lastReadOnlyToolSig = sig
+	a.mu.Unlock()
+}
+
+func readOnlyPersonalAppSignature(executions []agentruntime.ToolExecution) (string, bool) {
+	if len(executions) != 1 {
+		return "", false
+	}
+	execution := executions[0]
+	name := resolvedToolCallName(execution.Call)
+	if !isPersonalAppTool(name) || toolResultHasError(execution.Result.Content) {
+		return "", false
+	}
+	args := invocationArguments(execution.Call.Arguments)
+	action := strings.TrimSpace(common.AsString(args["action_text"]))
+	if action == "" {
+		action = strings.TrimSpace(common.AsString(args["subaction"]))
+	}
+	if action == "" {
+		action = strings.TrimSpace(common.AsString(args["op"]))
+	}
+	if action == "" {
+		action = strings.TrimSpace(common.AsString(args["action"]))
+	}
+	if action == "" && name == "personal_screen" {
+		action = "screen"
+	}
+	if action == "" {
+		return "", false
+	}
+	switch action {
+	case "screen", "list", "list_projects", "open_project":
+		payload, _ := json.Marshal(map[string]any{
+			"name":      name,
+			"action":    action,
+			"app":       common.AsString(args["app"]),
+			"projectId": common.AsString(args["projectId"]),
+		})
+		return string(payload), true
+	default:
+		return "", false
+	}
+}
+
+func isPersonalAppTool(name string) bool {
+	switch name {
+	case "personal_screen", "todo_app", "novel_app", "project_app", "music_app", "news_app", "activity_app":
+		return true
+	default:
+		return false
+	}
+}
+
 func toolResultHasError(content string) bool {
 	var payload map[string]any
 	return json.Unmarshal([]byte(content), &payload) == nil && strings.TrimSpace(common.AsString(payload["error"])) != ""
 }
 
 func shouldPersistAssistant(message agentruntime.Message, executions []agentruntime.ToolExecution) bool {
+	if len(message.ToolCalls) == 0 && len(executions) == 0 {
+		return false
+	}
 	persisted := assistantForPersistence(message, executions)
+	if isPlainWaitContent(persisted.Content) && len(persisted.ToolCalls) == 0 {
+		return false
+	}
 	return strings.TrimSpace(persisted.Content) != "" || len(persisted.ToolCalls) > 0
 }
 
+func isPlainWaitContent(content string) bool {
+	content = strings.TrimSpace(strings.ToLower(content))
+	content = strings.Trim(content, "。.!！ \t\r\n")
+	return content == "wait"
+}
+
 func assistantForPersistence(message agentruntime.Message, executions []agentruntime.ToolExecution) agentruntime.Message {
-	control := map[string]bool{}
+	message.ReasoningContent = ""
+	if len(message.ToolCalls) > 0 {
+		message.Content = ""
+	}
+	drop := map[string]bool{}
 	for _, execution := range executions {
-		if execution.Result.Kind == "control" {
-			control[execution.Call.ID] = true
+		if !shouldPersistToolResult(execution) {
+			drop[execution.Call.ID] = true
 		}
 	}
-	if len(control) == 0 {
+	if len(drop) == 0 {
 		return message
 	}
 	out := message
 	out.ToolCalls = nil
 	for _, call := range message.ToolCalls {
-		if !control[call.ID] {
+		if !drop[call.ID] {
 			out.ToolCalls = append(out.ToolCalls, call)
 		}
 	}
@@ -743,7 +915,22 @@ func assistantForPersistence(message agentruntime.Message, executions []agentrun
 }
 
 func shouldPersistToolResult(execution agentruntime.ToolExecution) bool {
+	switch toolResultError(execution.Result.Content) {
+	case "AI_TONE_TOO_HIGH", "UNKNOWN_TOOL", "INVOKE_TOOL_NOT_FOUND", "INVOKE_TOOL_NOT_AVAILABLE":
+		return false
+	}
+	if resolvedToolCallName(execution.Call) == "enter" && toolResultOK(execution.Result.Content) {
+		return true
+	}
 	return execution.Result.Kind != "control"
+}
+
+func toolResultError(content string) string {
+	var payload map[string]any
+	if json.Unmarshal([]byte(content), &payload) != nil {
+		return ""
+	}
+	return strings.TrimSpace(common.AsString(payload["error"]))
 }
 
 func (a *AgentRuntime) appendWakeReminderIfNeeded() {
@@ -892,12 +1079,12 @@ func (a *AgentRuntime) filterNewStoryRecallContent(content string) string {
 }
 
 func (a *AgentRuntime) postToolFocusMessages(execution agentruntime.ToolExecution) []agentruntime.Message {
-	switch execution.Call.Name {
+	switch resolvedToolCallName(execution.Call) {
 	case "enter":
 		if !toolResultOK(execution.Result.Content) {
 			return nil
 		}
-		return a.focusMessagesForState(enteredStateID(execution.Call.Arguments))
+		return a.focusMessagesForState(enteredStateID(invocationArguments(execution.Call.Arguments)))
 	case "back":
 		if !toolResultOK(execution.Result.Content) {
 			return nil
@@ -975,6 +1162,8 @@ func (a *AgentRuntime) focusMessagesForStateLocked(stateID string) []agentruntim
 
 func (a *AgentRuntime) stateOnFocusMessages(stateID string) []agentruntime.Message {
 	switch {
+	case isPersonalAppState(stateID):
+		return a.personalAppFocusMessages(stateID)
 	case stateID == "portal":
 		return nil
 	case stateID == "ithome":
@@ -984,6 +1173,27 @@ func (a *AgentRuntime) stateOnFocusMessages(stateID string) []agentruntime.Messa
 	default:
 		return nil
 	}
+}
+
+func isPersonalAppState(stateID string) bool {
+	switch stateID {
+	case "todo", "novel", "projects", "browser", "music", "news":
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *AgentRuntime) personalAppFocusMessages(appID string) []agentruntime.Message {
+	if a.personal == nil {
+		return nil
+	}
+	screen, err := a.personal.Screen(appID)
+	if err != nil {
+		return []agentruntime.Message{{Role: "user", Content: "<app_screen app=\"" + appID + "\">\n{\"ok\":false,\"error\":\"" + err.Error() + "\"}\n</app_screen>"}}
+	}
+	data, _ := json.MarshalIndent(screen, "", "  ")
+	return []agentruntime.Message{{Role: "user", Content: "<app_screen app=\"" + appID + "\">\n" + string(data) + "\n</app_screen>"}}
 }
 
 func (a *AgentRuntime) stateReminderMessage(stateID string) agentruntime.Message {
@@ -1065,7 +1275,7 @@ func (a *AgentRuntime) chatFocusMessages(stateID string) []agentruntime.Message 
 		return nil
 	}
 	var b strings.Builder
-	b.WriteString("<system_reminder>\n你已进入 QQ 对话节点。以下是最近消息上下文：\n</system_reminder>\n")
+	b.WriteString("<system_reminder>\nRecent chat context after entering this chat:\n")
 	for i, item := range selected {
 		if i > 0 {
 			b.WriteString("\n")
@@ -1075,10 +1285,12 @@ func (a *AgentRuntime) chatFocusMessages(stateID string) []agentruntime.Message 
 			nickname = stringPtrValue(item.Nickname)
 		}
 		if nickname == "" {
-			nickname = "未知用户"
+			nickname = "unknown"
 		}
-		b.WriteString(prompts.QQMessageAt(nickname, stringPtrValue(item.UserID), item.RawMessage, timePtrValue(item.EventTime)))
+		raw := strings.TrimSpace(common.AsString(item.RawMessage))
+		fmt.Fprintf(&b, "%s (%s):\n%s\n", nickname, stringPtrValue(item.UserID), raw)
 	}
+	b.WriteString("</system_reminder>")
 	return []agentruntime.Message{{Role: "user", Content: b.String()}}
 }
 
@@ -1087,17 +1299,18 @@ func groupUnreadFocusMessages(messages []roottools.GroupUnreadMessage) []agentru
 		return nil
 	}
 	var b strings.Builder
-	b.WriteString("<system_reminder>\n你已进入 QQ 群聊节点。以下是进入前积累的未读消息：\n</system_reminder>\n")
+	b.WriteString("<system_reminder>\nUnread group messages:\n")
 	for i, item := range messages {
 		if i > 0 {
 			b.WriteString("\n")
 		}
 		nickname := strings.TrimSpace(item.Nickname)
 		if nickname == "" {
-			nickname = "未知用户"
+			nickname = "unknown"
 		}
-		b.WriteString(prompts.QQMessageAt(nickname, item.UserID, item.RawMessage, item.EventTime))
+		fmt.Fprintf(&b, "%s (%s):\n%s\n", nickname, item.UserID, strings.TrimSpace(item.RawMessage))
 	}
+	b.WriteString("</system_reminder>")
 	return []agentruntime.Message{{Role: "user", Content: b.String()}}
 }
 
@@ -1106,20 +1319,20 @@ func privateUnreadFocusMessages(messages []roottools.PrivateUnreadMessage) []age
 		return nil
 	}
 	var b strings.Builder
-	b.WriteString("<system_reminder>\n你已进入 QQ 私聊节点。以下是进入前积累的未读消息：\n</system_reminder>\n")
+	b.WriteString("<system_reminder>\nUnread private messages:\n")
 	for i, item := range messages {
 		if i > 0 {
 			b.WriteString("\n")
 		}
 		nickname := strings.TrimSpace(item.Nickname)
 		if nickname == "" {
-			nickname = "未知用户"
+			nickname = "unknown"
 		}
-		b.WriteString(prompts.QQMessageAt(nickname, item.UserID, item.RawMessage, item.EventTime))
+		fmt.Fprintf(&b, "%s (%s):\n%s\n", nickname, item.UserID, strings.TrimSpace(item.RawMessage))
 	}
+	b.WriteString("</system_reminder>")
 	return []agentruntime.Message{{Role: "user", Content: b.String()}}
 }
-
 func (a *AgentRuntime) ithomeArticleDetailMessage(args map[string]any) (agentruntime.Message, bool) {
 	articleID := intValue(args["articleId"])
 	if articleID == 0 {
@@ -1155,6 +1368,21 @@ func enteredStateID(args map[string]any) string {
 	id := common.AsString(args["id"])
 	if id == "" {
 		id = common.AsString(args["stateId"])
+	}
+	if id == "" {
+		id = common.AsString(args["app"])
+	}
+	if id == "" {
+		id = common.AsString(args["appId"])
+	}
+	if id == "" {
+		id = common.AsString(args["target"])
+	}
+	if id == "" {
+		id = common.AsString(args["query"])
+	}
+	if id == "" {
+		id = common.AsString(args["message"])
 	}
 	switch kind {
 	case "qq_group":
@@ -1249,28 +1477,20 @@ func timePtrValue(value *time.Time) time.Time {
 }
 
 func sentMessageReminder(execution agentruntime.ToolExecution) string {
-	args := execution.Call.Arguments
-	switch execution.Call.Name {
-	case "invoke":
-		if invocationToolName(execution.Call.Arguments) != "send_message" {
-			return ""
-		}
-		args = invocationArguments(execution.Call.Arguments)
-	case "send_message":
-	default:
+	if resolvedToolCallName(execution.Call) != "send_message" || toolResultHasError(execution.Result.Content) {
 		return ""
 	}
-	message := common.AsString(args["message"])
-	imagePath := common.AsString(args["imagePath"])
-	if strings.TrimSpace(message) == "" && strings.TrimSpace(imagePath) != "" {
-		message = "[浏览器截图]"
+	args := invocationArguments(execution.Call.Arguments)
+	message := strings.TrimSpace(common.AsString(args["message"]))
+	imagePath := strings.TrimSpace(common.AsString(args["imagePath"]))
+	if message == "" && imagePath != "" {
+		message = "[图片]"
 	}
-	if strings.TrimSpace(message) == "" {
+	if message == "" {
 		return ""
 	}
-	return fmt.Sprintf("<system_reminder>你刚刚已经通过 send_message 对外发送了这条消息：%s</system_reminder>", message)
+	return fmt.Sprintf("<system_reminder>已发送消息：%s</system_reminder>", message)
 }
-
 func (a *AgentRuntime) maybeCompactRoot(completion agentruntime.Completion) {
 	if completion.Usage == nil {
 		return
@@ -1709,7 +1929,7 @@ func (a *AgentRuntime) maybeCreateStory(event AgentEvent) {
 		Time:                  common.ISO(now),
 		Scene:                 scene,
 		People:                []string{nickname},
-		Impact:                "由消息事件自动沉淀",
+		Impact:                "由消息事件自动沉淀，供后续记忆召回。",
 		SourceMessageSeqStart: seq,
 		SourceMessageSeqEnd:   seq,
 		CreatedAt:             now,
@@ -1717,6 +1937,13 @@ func (a *AgentRuntime) maybeCreateStory(event AgentEvent) {
 		MatchedKinds:          []string{"overview"},
 	}
 	a.store.AddStory(story)
+}
+
+func (a *AgentRuntime) PersonalNovelEntries() ([]personalapp.NovelEntry, error) {
+	if a.personal == nil {
+		return nil, fmt.Errorf("个人 App 服务不可用")
+	}
+	return a.personal.ListNovelEntries()
 }
 
 func (a *AgentRuntime) Snapshot(llm *llm.LLMClient) map[string]any {
@@ -1766,7 +1993,7 @@ func (a *AgentRuntime) Snapshot(llm *llm.LLMClient) map[string]any {
 		"generatedAt": now,
 		"agents": []any{
 			map[string]any{
-				"id": "root", "kind": "root", "label": "Root Agent",
+				"id": "root", "kind": "root", "label": "根智能体",
 				"runtime": runtime, "context": contextSummary, "activity": activity,
 				"session": a.session.Snapshot(),
 				"queue": map[string]any{
@@ -1777,7 +2004,7 @@ func (a *AgentRuntime) Snapshot(llm *llm.LLMClient) map[string]any {
 				"providers": llm.ListProviders("agent")["providers"],
 			},
 			map[string]any{
-				"id": "story", "kind": "story", "label": "Story Agent",
+				"id": "story", "kind": "story", "label": "故事智能体",
 				"runtime": runtime, "context": contextSummary, "activity": activity,
 				"story": map[string]any{
 					"lastProcessedMessageSeq": a.storyLastSeq,
@@ -1796,9 +2023,25 @@ func createSystemPrompt(cfg *config.Config) string {
 }
 
 func invokeToolGuide() string {
-	return "invoke 子工具清单不在 system prompt 中固定枚举；真正是否允许调用以当前状态允许的工具集合为准。如果调用错误，工具返回会附带当前可用工具说明和参数提示。"
+	return strings.Join([]string{
+		"- 主循环直接暴露具体工具；每轮只调用一个工具。",
+		"- 控制工具：wait 表示沉默并等待新事件；enter/back_to_portal/help 只用于进入、退出或查看个人 App/工具环境，不用于 QQ 聊天和新闻。",
+		"- QQ 群/私聊：决定发言时直接调用 send_message。message 必须非空；回复最新 QQ 消息所在会话时可省略 targetType/targetId，跨会话或回复非最新消息时必须显式填写。",
+		"- 没有要发的内容、话题已经被别人说完、只是想总结或点评时，直接调用 wait，不要把 wait 写成普通文本。",
+		"- 网页事实与链接读取：需要补充外部事实、读取网页链接或搜索资料时调用 search_web，参数 query；完整 URL 会优先直接读取页面，失败后再搜索。",
+		"- 真实浏览器：需要动态网页、点击、输入、翻页、登录态复用、看直播或查看媒体状态时调用 browser，参数 task/url/sessionId。",
+		"- 图片理解：需要看 QQ 图片、浏览器截图或本地受控图片时调用 analyze_image；它只返回识别结果，不会自动发消息。",
+		"- AI 腔调检测：草稿像总结、短评、客服解释或 AI 味明显时调用 detect_ai_tone；不要每句话都检测。send_message 返回 AI_TONE_TOO_HIGH 时表示未发送，需改短改具体或 wait。",
+		"- 长期记忆：需要主动查找叙事记忆时调用 search_memory，参数 query；召回结果只作参考，不要当成刚发生的新消息复述。",
+		"- IT之家：要阅读全文时调用 open_ithome_article，参数 articleId；看完想分享再调用 send_message。",
+		"- 磁力搜索：只有用户明确请求磁力、种子或下载资源时才调用 searchMagnetFromWeb。",
+		"- 个人 App：personal_screen 查看个人空间状态；activity_app 记录自己正在做的事；todo_app 处理待办；novel_app 写小说/随笔/灵感；project_app 管理项目笔记；music_app 记录音乐；news_app 保存阅读摘记。",
+		"- 个人 App 不要反复 screen：看完状态后应继续写入、修改、打开具体条目、结束活动或 wait。写随笔/灵感优先调用 novel_app(action=\"upsert_entry\", title=\"...\", text=\"...\")。",
+		"- 做自己的事情时不必每一步都私聊汇报；只有用户正在等结果、动作完成值得说明，或确实有内容想分享时才 send_message。",
+		"- 终端工具：bash/read_bash_output 只在终端能力可用且确实需要执行命令时使用。",
+		"- 工具因为参数错误失败时，修正参数或调用 wait；不要原样重复同一个失败调用。",
+	}, "\n")
 }
-
 func contextItem(kind, label, text string) DashboardContextItem {
 	return DashboardContextItem{Kind: kind, Label: label, Preview: trimPreview(text, 2000), Truncated: len([]rune(strings.TrimSpace(text))) > 2000}
 }
@@ -1840,32 +2083,60 @@ func rootControlTools(
 		}
 	}
 	alwaysAvailable := map[string]bool{
-		"search_web":    true,
-		"search_memory": true,
-		"analyze_image": true,
-		"browser":       true,
+		"send_message":        true,
+		"search_web":          true,
+		"search_memory":       true,
+		"analyze_image":       true,
+		"detect_ai_tone":      true,
+		"browser":             true,
+		"personal_screen":     true,
+		"todo_app":            true,
+		"novel_app":           true,
+		"project_app":         true,
+		"music_app":           true,
+		"news_app":            true,
+		"activity_app":        true,
+		"open_ithome_article": true,
 	}
 	owner := roottools.CatalogSubtoolOwner{
 		Tools:           business,
 		Session:         session,
 		AlwaysAvailable: alwaysAvailable,
 	}
-	catalog := agentruntime.NewToolCatalog(
+	controlCatalog := agentruntime.NewToolCatalog(
 		roottools.EnterTool{Session: session},
 		roottools.AppBackToPortalTool{Session: session},
-		roottools.WaitTool{MaxWait: maxWait, WaitSignal: func(ctx context.Context) bool {
-			if events.WaitSignal(ctx) {
-				return true
-			}
-			if cfg.Server.Agent.Autonomous.Enabled {
-				events.Enqueue(AgentEvent{Type: "wake", Data: map[string]any{"reason": "self_continuation"}})
-			} else if cfg.Server.Agent.CacheKeepaliveEnabled {
-				events.Enqueue(AgentEvent{Type: "wake", Data: map[string]any{"reason": "wait_timeout"}})
-			}
-			return false
-		}},
-		roottools.InvokeTool{Owners: []roottools.InvokeSubtoolOwner{owner}},
-	).Pick("enter", "back_to_portal", "wait", "invoke")
+		roottools.HelpTool{Session: session},
+	)
+	controlOwner := roottools.CatalogSubtoolOwner{
+		Tools: controlCatalog,
+		AlwaysAvailable: map[string]bool{
+			"enter":          true,
+			"back_to_portal": true,
+			"help":           true,
+		},
+	}
+	waitTool := roottools.WaitTool{MaxWait: maxWait, WaitSignal: func(ctx context.Context) bool {
+		if events.WaitSignal(ctx) {
+			return true
+		}
+		if cfg.Server.Agent.Autonomous.Enabled {
+			events.Enqueue(AgentEvent{Type: "wake", Data: map[string]any{"reason": "self_continuation"}})
+		} else if cfg.Server.Agent.CacheKeepaliveEnabled {
+			events.Enqueue(AgentEvent{Type: "wake", Data: map[string]any{"reason": "wait_timeout"}})
+		}
+		return false
+	}}
+	catalog := agentruntime.NewToolCatalog()
+	for _, definition := range controlCatalog.Definitions() {
+		catalog.Add(roottools.DirectSubtool{
+			Owner:           controlOwner,
+			DefinitionValue: definition,
+			ToolKind:        "business",
+			CheckPermission: true,
+		})
+	}
+	catalog.Add(waitTool)
 	for _, definition := range business.Definitions() {
 		tool, ok := business.Get(definition.Name)
 		if !ok {
@@ -1873,9 +2144,9 @@ func rootControlTools(
 		}
 		catalog.Add(roottools.DirectSubtool{
 			Owner:           owner,
-			DefinitionValue: tool.Definition(),
+			DefinitionValue: definition,
 			ToolKind:        tool.Kind(),
-			CheckPermission: !alwaysAvailable[definition.Name],
+			CheckPermission: true,
 		})
 	}
 	return catalog
@@ -1887,9 +2158,7 @@ func rootTools(
 	session *roottools.Session,
 	events *EventQueue,
 ) *agentruntime.ToolCatalog {
-	catalog := rootControlTools(cfg, business, session, events)
-	catalog.Add(roottools.HelpTool{Session: session})
-	return catalog
+	return rootControlTools(cfg, business, session, events)
 }
 
 func (a *AgentRuntime) setRuntimeError(err error) {
@@ -1940,13 +2209,13 @@ func (a *AgentRuntime) renderEventContext(event AgentEvent) string {
 	case "napcat_group_message":
 		nickname := common.AsString(event.Data["nickname"])
 		if nickname == "" {
-			nickname = "未知用户"
+			nickname = "unknown"
 		}
 		return prompts.QQMessageRoutedAt("group", common.AsString(event.Data["groupId"]), nickname, common.AsString(event.Data["userId"]), common.AsString(event.Data["rawMessage"]), event.At)
 	case "napcat_private_message":
 		nickname := common.AsString(event.Data["nickname"])
 		if nickname == "" {
-			nickname = "未知用户"
+			nickname = "unknown"
 		}
 		return prompts.QQMessageRoutedAt("private", common.AsString(event.Data["userId"]), nickname, common.AsString(event.Data["userId"]), common.AsString(event.Data["rawMessage"]), event.At)
 	case "news_article_ingested":
@@ -1962,10 +2231,7 @@ func (a *AgentRuntime) renderEventContext(event AgentEvent) string {
 	case "story_recall_completed":
 		return renderStoryRecallMessage(common.AsString(event.Data["content"]))
 	}
-	return fmt.Sprintf(`<system_reminder>
-收到外部事件：%s
-事件内容：%v
-</system_reminder>`, event.Type, event.Data)
+	return fmt.Sprintf("<system_reminder>event: %s\ndata: %v</system_reminder>", event.Type, event.Data)
 }
 
 func renderStoryRecallMessage(content string) string {
@@ -1982,7 +2248,7 @@ func renderStoryRecallMessage(content string) string {
 			if date == "" {
 				date = "未知日期"
 			}
-			fmt.Fprintf(&b, "你想起了一件发生在 %s 的事情：\n\n%s\n", date, common.AsString(item["markdown"]))
+			fmt.Fprintf(&b, "你想起了一件发生在 %s 的事情：\n%s\n", date, common.AsString(item["markdown"]))
 		}
 		b.WriteString("</story_recall>")
 		return b.String()
@@ -2003,7 +2269,6 @@ func formatStoryRecallDate(value string) string {
 	}
 	return t.Format("2006-01-02")
 }
-
 func (a *AgentRuntime) findNewsArticle(id any) (db.NewsArticle, bool) {
 	articleID := intValue(id)
 	if articleID == 0 {
@@ -2044,12 +2309,12 @@ func storyMarkdown(title, timestamp, scene string, people []string, raw string) 
 - 时间：%s
 - 场景：%s
 - 人物：%s
-- 影响：由消息事件自动沉淀，后续可被长期记忆召回。
+- 影响：由消息事件自动沉淀，供后续记忆召回。
 
-起因：群聊中出现了一条新的消息。
+起因：聊天中出现了新消息。
 经过：
 1. %s
-结果：该消息已作为一条轻量 story 记录下来。`, title, timestamp, scene, strings.Join(people, "、"), raw)
+结果：该消息已保存为轻量 story。`, title, timestamp, scene, strings.Join(people, ", "), raw)
 }
 
 func formatTime(t time.Time) string {
@@ -2099,6 +2364,16 @@ func toolCallNames(calls []agentruntime.ToolCall) []string {
 	for _, call := range calls {
 		if call.Name != "" {
 			names = append(names, call.Name)
+		}
+	}
+	return names
+}
+
+func toolDefinitionNames(definitions []agentruntime.ToolDefinition) []string {
+	names := make([]string, 0, len(definitions))
+	for _, definition := range definitions {
+		if definition.Name != "" {
+			names = append(names, definition.Name)
 		}
 	}
 	return names

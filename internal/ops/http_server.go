@@ -61,6 +61,7 @@ func (s *HTTPServer) routes() {
 	s.mux.HandleFunc("/napcat-group-message/query", s.napcatMessageQuery)
 	s.mux.HandleFunc("/story/query", s.storyQuery)
 	s.mux.HandleFunc("/story/reindex", s.storyReindex)
+	s.mux.HandleFunc("/personal-apps/novel", s.personalNovelEntries)
 	s.mux.HandleFunc("/metric-chart/list", s.metricChartList)
 	s.mux.HandleFunc("/metric-chart/data", s.metricChartData)
 	s.mux.HandleFunc("/metric-chart/create", s.metricChartCreate)
@@ -413,6 +414,18 @@ func (s *HTTPServer) storyReindex(w http.ResponseWriter, r *http.Request) {
 		mode = "outdated"
 	}
 	common.WriteJSON(w, http.StatusOK, rootagent.ReindexStories(r.Context(), s.cfg, s.store, mode))
+}
+
+func (s *HTTPServer) personalNovelEntries(w http.ResponseWriter, r *http.Request) {
+	if !s.requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	items, err := s.agent.PersonalNovelEntries()
+	if err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, map[string]any{"message": err.Error()})
+		return
+	}
+	common.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
 func (s *HTTPServer) metricChartList(w http.ResponseWriter, r *http.Request) {

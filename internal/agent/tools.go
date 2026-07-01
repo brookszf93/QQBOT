@@ -2,10 +2,12 @@ package agent
 
 import (
 	"QqBot/internal/agentruntime"
+	"QqBot/internal/capabilities/airadar"
 	browsercap "QqBot/internal/capabilities/browser"
 	"QqBot/internal/capabilities/magnetsearch"
 	"QqBot/internal/capabilities/messaging"
 	"QqBot/internal/capabilities/news"
+	"QqBot/internal/capabilities/personalapp"
 	storycap "QqBot/internal/capabilities/story"
 	"QqBot/internal/capabilities/terminal"
 	"QqBot/internal/capabilities/vision"
@@ -25,19 +27,31 @@ import (
 	"time"
 )
 
-func buildBusinessTools(cfg *config.Config, store *db.Store, sender messaging.Sender, terminalService *terminal.Service, llmClient *llm.LLMClient) *agentruntime.ToolCatalog {
+func buildBusinessTools(cfg *config.Config, store *db.Store, sender messaging.Sender, terminalService *terminal.Service, llmClient *llm.LLMClient, personal *personalapp.Service) *agentruntime.ToolCatalog {
 	indexer := storycap.NewMemoryIndexer(cfg, store)
 	recall := storycap.NewVectorRecall(cfg, store)
 	storyService := storycap.Service{Repo: storeStoryRepository{store: store, indexer: indexer}, Recall: recall}
 	searchService := websearch.URLAwareService{
 		Fallback: websearch.TavilyService{APIKey: cfg.Server.Tavily.APIKey},
 	}
+	aiToneClassifier, err := airadar.NewDefaultClassifier()
+	if err != nil {
+		store.Log("error", "AIRadar model load failed", map[string]any{"event": "airadar.model.load_failed", "error": err.Error()})
+	}
 	catalog := agentruntime.NewToolCatalog(
-		sendMessageTool{sender: sender, screenshotDir: cfg.Server.Browser.ScreenshotDir},
+		sendMessageTool{sender: sender, store: store, screenshotDir: cfg.Server.Browser.ScreenshotDir, aiToneClassifier: aiToneClassifier, aiToneThreshold: 0.65},
 		analyzeImageTool{vision: vision.Agent{Client: llmClient}, requester: requesterFromSender(sender), screenshotDir: cfg.Server.Browser.ScreenshotDir},
+		airadar.DetectTool{Classifier: aiToneClassifier},
 		news.OpenIthomeArticleTool{Store: storeNewsStore{store: store}},
 		storycap.SearchMemoryTool{Service: storyService, TopK: cfg.Server.Agent.Story.Memory.Retrieval.TopK},
 		&WebSearchTaskAgentTool{service: searchService},
+		personalapp.ScreenTool{Service: personal},
+		personalapp.TodoTool{Service: personal},
+		personalapp.NovelTool{Service: personal},
+		personalapp.ProjectTool{Service: personal},
+		personalapp.MusicTool{Service: personal},
+		personalapp.NewsTool{Service: personal},
+		personalapp.ActivityTool{Service: personal},
 		calculateTool{},
 	)
 	if cfg.Server.Browser.Enabled {
@@ -144,8 +158,11 @@ func jsonToolResult(value map[string]any) agentruntime.ToolResult {
 }
 
 type sendMessageTool struct {
-	sender        messaging.Sender
-	screenshotDir string
+	sender           messaging.Sender
+	store            *db.Store
+	screenshotDir    string
+	aiToneClassifier *airadar.Classifier
+	aiToneThreshold  float64
 }
 
 func (t sendMessageTool) Definition() agentruntime.ToolDefinition {
@@ -161,7 +178,7 @@ func (t sendMessageTool) Kind() string { return "business" }
 
 func (t sendMessageTool) Execute(_ context.Context, call agentruntime.ToolCall) (agentruntime.ToolResult, error) {
 	if t.sender == nil {
-		return agentruntime.ToolResult{}, fmt.Errorf("sender is nil")
+		return agentruntime.ToolResult{}, fmt.Errorf("消息发送器不可用")
 	}
 	targetType, _ := call.Arguments["targetType"].(string)
 	targetID, _ := call.Arguments["targetId"].(string)
@@ -176,6 +193,9 @@ func (t sendMessageTool) Execute(_ context.Context, call agentruntime.ToolCall) 
 	}
 	if strings.TrimSpace(message) == "" {
 		return jsonToolResult(map[string]any{"ok": false, "error": "EMPTY_MESSAGE", "message": "message 和 imagePath 至少需要一个。"}), nil
+	}
+	if block := t.blockHighAITone(message); block != nil {
+		return *block, nil
 	}
 	if targetID == "" {
 		return jsonToolResult(map[string]any{"ok": false, "error": "MESSAGE_TARGET_REQUIRED", "message": "缺少 targetType/targetId；请使用 qq_message 标签中的回复路由。"}), nil
@@ -192,6 +212,84 @@ func (t sendMessageTool) Execute(_ context.Context, call agentruntime.ToolCall) 
 	}
 	data, _ := json.Marshal(map[string]any{"messageId": id})
 	return agentruntime.ToolResult{Kind: "business", Content: string(data)}, err
+}
+
+func (t sendMessageTool) blockHighAITone(message string) *agentruntime.ToolResult {
+	text := strings.TrimSpace(stripCQSegments(message))
+	if text == "" {
+		return nil
+	}
+	classifier := t.aiToneClassifier
+	if classifier == nil {
+		var err error
+		classifier, err = airadar.NewDefaultClassifier()
+		if err != nil {
+			result := jsonToolResult(map[string]any{"ok": false, "error": "AI_TONE_MODEL_UNAVAILABLE", "message": "AIRadar 模型加载失败：" + err.Error()})
+			return &result
+		}
+	}
+	threshold := t.aiToneThreshold
+	if threshold <= 0 {
+		threshold = 0.65
+	}
+	result := classifier.Predict(text, threshold)
+	t.logAIToneCheck(text, result.Prob, threshold, result.Prob > threshold)
+	if result.Prob <= threshold {
+		return nil
+	}
+	blocked := jsonToolResult(map[string]any{
+		"ok":        false,
+		"error":     "AI_TONE_TOO_HIGH",
+		"prob":      roundFloat(result.Prob, 6),
+		"label":     result.Label,
+		"threshold": threshold,
+		"message":   "这条 send_message 已被 AIRadar 拦截：AI 腔调概率超过阈值。请不要原样发送，改成更短、更具体的接梗、追问或吐槽；改不出来就 wait。",
+	})
+	return &blocked
+}
+
+func (t sendMessageTool) logAIToneCheck(text string, prob, threshold float64, blocked bool) {
+	if t.store == nil {
+		return
+	}
+	t.store.Log("info", "Send message AI tone checked", map[string]any{
+		"event":     "agent.send_message.ai_tone_checked",
+		"prob":      roundFloat(prob, 6),
+		"threshold": threshold,
+		"blocked":   blocked,
+		"message":   trimRunes(text, 240),
+	})
+}
+
+func trimRunes(text string, limit int) string {
+	text = strings.TrimSpace(text)
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	return string(runes[:limit-1]) + "…"
+}
+
+func stripCQSegments(text string) string {
+	for {
+		start := strings.Index(text, "[CQ:")
+		if start < 0 {
+			return text
+		}
+		end := strings.Index(text[start:], "]")
+		if end < 0 {
+			return text[:start]
+		}
+		text = text[:start] + text[start+end+1:]
+	}
+}
+
+func roundFloat(value float64, digits int) float64 {
+	scale := math.Pow10(digits)
+	return math.Round(value*scale) / scale
 }
 
 func allowedScreenshotPath(root, candidate string) (string, error) {

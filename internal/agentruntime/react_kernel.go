@@ -75,6 +75,9 @@ func (k ReActKernel) RunRound(ctx context.Context, input RoundInput) (RoundResul
 	if err != nil {
 		return RoundResult{}, err
 	}
+	for i, call := range completion.Message.ToolCalls {
+		completion.Message.ToolCalls[i] = NormalizeToolCall(call)
+	}
 	result := RoundResult{Completion: completion, Assistant: completion.Message}
 	if input.Tools == nil {
 		return result, nil

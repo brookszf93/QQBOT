@@ -146,6 +146,13 @@
       .badge.warn { background: #fff5df; color: var(--warn); }
       .badge.bad { background: #fff0ee; color: var(--bad); }
       .json { max-height: 420px; overflow: auto; background: var(--code); padding: 10px; }
+      .essay-list { display: grid; gap: 12px; }
+      .essay-card { border: 1px solid var(--line); border-radius: 6px; background: var(--panel); overflow: hidden; }
+      .essay-card header { position: static; min-height: 0; padding: 10px 12px; border-bottom: 1px solid var(--line); background: #fbfcfd; }
+      .essay-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; color: var(--muted); font-size: 12px; }
+      .essay-body { display: grid; gap: 10px; padding: 12px; }
+      .essay-section h3 { margin-bottom: 5px; color: var(--muted); }
+      .essay-text { max-height: 360px; overflow: auto; border: 1px solid var(--line); border-radius: 5px; background: var(--code); padding: 10px; }
       details summary { cursor: pointer; color: var(--accent); }
       .empty { padding: 22px; color: var(--muted); text-align: center; }
       .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
@@ -180,6 +187,7 @@
           <button data-view="logs">应用日志</button>
           <button data-view="events">NapCat 事件</button>
           <button data-view="stories">Story</button>
+          <button data-view="essays">随笔</button>
           <button data-view="metrics">指标</button>
           <button data-view="runtime">运行管理</button>
           <button data-view="tools">操作台</button>
@@ -257,6 +265,14 @@
               <button id="reindex-story">重建索引</button>
             </div>
             <div class="panel" id="stories-result"></div>
+          </section>
+
+          <section class="view" id="view-essays">
+            <div class="toolbar">
+              <input id="essays-query" class="grow" placeholder="搜索随笔标题、草稿、笔记或项目 ID" />
+              <button data-load="essays">查询</button>
+            </div>
+            <div id="essays-result" class="essay-list"></div>
           </section>
 
           <section class="view" id="view-metrics">
@@ -356,6 +372,7 @@
         logs: ["应用日志", "服务运行日志"],
         events: ["NapCat 事件", "原始 WebSocket 事件"],
         stories: ["Story", "长期叙事记忆"],
+        essays: ["随笔", "个人 App 中的小说草稿、随笔和灵感记录"],
         metrics: ["指标", "运行时指标图表"],
         runtime: ["运行管理", "调度、认证和 Agent 状态维护"],
         tools: ["操作台", "手动发送和 LLM 调试"]
@@ -452,6 +469,42 @@
           esc(time(x.updatedAt)), `<strong>${esc(x.title)}</strong>`, esc(x.time), esc(x.scene), esc((x.people || []).join("、")), details(x)
         ]), data.pagination);
       }
+      function essaySection(title, text) {
+        if (!String(text ?? "").trim()) return "";
+        return `<section class="essay-section"><h3>${esc(title)}</h3><pre class="essay-text">${esc(text)}</pre></section>`;
+      }
+      function essaySearchText(item) {
+        const project = item.project || {};
+        return [project.id, project.title, project.status, item.outline, item.notes, item.draft, item.journal].join("\n").toLowerCase();
+      }
+      function renderEssay(item) {
+        const project = item.project || {};
+        const body = [
+          essaySection("Outline", item.outline),
+          essaySection("Notes", item.notes),
+          essaySection("Draft", item.draft),
+          essaySection("Journal", item.journal)
+        ].filter(Boolean).join("");
+        return `<article class="essay-card">
+          <header>
+            <div><strong>${esc(project.title || project.id || "未命名随笔")}</strong> ${item.active ? badge("active") : ""} ${item.truncated ? badge("truncated") : ""}</div>
+            <div class="essay-meta">
+              <span>${esc(project.id || "")}</span>
+              <span>${esc(project.status || "")}</span>
+              <span>创建 ${esc(time(project.createdAt))}</span>
+              <span>更新 ${esc(time(project.updatedAt))}</span>
+            </div>
+          </header>
+          <div class="essay-body">${body || `<div class="empty">这个项目还没有正文</div>`}</div>
+        </article>`;
+      }
+      async function loadEssays() {
+        const data = await request("/personal-apps/novel");
+        const query = $("essays-query").value.trim().toLowerCase();
+        let items = data.items || [];
+        if (query) items = items.filter(item => essaySearchText(item).includes(query));
+        $("essays-result").innerHTML = items.length ? items.map(renderEssay).join("") : `<div class="panel empty">暂无随笔</div>`;
+      }
       async function loadMetricList() {
         const data = await request("/metric-chart/list");
         const items = Array.isArray(data) ? data : data.items || data.charts || [];
@@ -490,7 +543,7 @@
       async function loadRuntime() {
         await Promise.all([loadScheduler(), loadAuth()]);
       }
-      const loaders = { overview: loadOverview, messages: loadMessages, "llm-calls": loadLlmCalls, logs: loadLogs, events: loadEvents, stories: loadStories, metrics: loadMetricList, runtime: loadRuntime };
+      const loaders = { overview: loadOverview, messages: loadMessages, "llm-calls": loadLlmCalls, logs: loadLogs, events: loadEvents, stories: loadStories, essays: loadEssays, metrics: loadMetricList, runtime: loadRuntime };
 
       async function load(name = state.active) {
         try {

@@ -70,6 +70,42 @@ func TestInvokeInfersSendMessageWhenToolNameMissing(t *testing.T) {
 	}
 }
 
+func TestActDispatchesSendMessage(t *testing.T) {
+	called := false
+	var args map[string]any
+	tool := ActTool{Invoke: InvokeTool{Owners: []InvokeSubtoolOwner{CatalogSubtoolOwner{
+		Tools: agentruntime.NewToolCatalog(recordingSendTool{called: &called, args: &args}),
+	}}}}
+	result, err := tool.Execute(context.Background(), agentruntime.ToolCall{
+		ID: "act-1", Name: "act", Arguments: map[string]any{
+			"action":  "send_message",
+			"message": "直接发出",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !called || result.Content != `{"messageId":1}` {
+		t.Fatalf("act should dispatch send_message: called=%v result=%s", called, result.Content)
+	}
+	if args["message"] != "直接发出" {
+		t.Fatalf("act should preserve delegated args: %#v", args)
+	}
+}
+
+func TestNormalizeEnterArgumentsAcceptsActAliases(t *testing.T) {
+	for _, args := range []map[string]any{
+		{"message": "novel"},
+		{"query": "novel"},
+		{"app": "novel"},
+		{"target": "novel"},
+	} {
+		if got := normalizeEnterArguments(args); got != "novel" {
+			t.Fatalf("enter aliases should resolve to novel, got %q for %#v", got, args)
+		}
+	}
+}
+
 func TestCatalogSubtoolOwnerInjectsLatestParallelRoute(t *testing.T) {
 	called := false
 	var args map[string]any
@@ -120,5 +156,16 @@ func TestDirectSubtoolChecksCurrentSessionPermission(t *testing.T) {
 	}
 	if !strings.Contains(result.Content, "INVOKE_TOOL_NOT_AVAILABLE") {
 		t.Fatalf("unexpected permission result: %s", result.Content)
+	}
+}
+
+func TestOrderedParameterNamesAreStableSorted(t *testing.T) {
+	names := orderedParameterNames(map[string]any{
+		"message":    nil,
+		"targetType": nil,
+		"imagePath":  nil,
+	})
+	if got := strings.Join(names, ","); got != "imagePath,message,targetType" {
+		t.Fatalf("parameters should be stable sorted, got %s", got)
 	}
 }

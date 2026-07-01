@@ -17,7 +17,7 @@ func (t BashTool) Definition() agentruntime.ToolDefinition {
 func (t BashTool) Kind() string { return "business" }
 func (t BashTool) Execute(ctx context.Context, call agentruntime.ToolCall) (agentruntime.ToolResult, error) {
 	if t.Service == nil {
-		return agentruntime.ToolResult{}, fmt.Errorf("terminal service is nil")
+		return agentruntime.ToolResult{}, fmt.Errorf("终端服务不可用")
 	}
 	command, _ := call.Arguments["command"].(string)
 	out, err := t.Service.Run(ctx, command)

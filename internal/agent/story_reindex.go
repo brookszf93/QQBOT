@@ -37,7 +37,7 @@ func ReindexStories(ctx context.Context, cfg *config.Config, store *db.Store, mo
 	if indexer == nil {
 		resp.FailedStories = len(targets)
 		for _, story := range targets {
-			resp.Failures = append(resp.Failures, map[string]any{"storyId": story.ID, "message": "story memory embedding is not configured"})
+			resp.Failures = append(resp.Failures, map[string]any{"storyId": story.ID, "message": "Story 记忆 embedding 未配置。"})
 		}
 		return resp
 	}

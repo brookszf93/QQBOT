@@ -12,7 +12,9 @@ import (
 	"testing"
 
 	"QqBot/internal/agentruntime"
+	"QqBot/internal/capabilities/airadar"
 	"QqBot/internal/capabilities/vision"
+	"QqBot/internal/db"
 )
 
 type recordingMessageSender struct {
@@ -118,6 +120,85 @@ func TestSendMessageRejectsImageOutsideScreenshotDirectory(t *testing.T) {
 	}
 	if sender.message != "" || !strings.Contains(result.Content, "IMAGE_PATH_NOT_ALLOWED") {
 		t.Fatalf("outside image should be rejected: sent=%q result=%s", sender.message, result.Content)
+	}
+}
+
+func TestSendMessageRejectsHighAIToneText(t *testing.T) {
+	classifier, err := airadar.NewDefaultClassifier()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender := &recordingMessageSender{}
+	tool := sendMessageTool{sender: sender, aiToneClassifier: classifier, aiToneThreshold: 0.65}
+	result, err := tool.Execute(context.Background(), agentruntime.ToolCall{
+		Name: "send_message",
+		Arguments: map[string]any{
+			"targetType": "private",
+			"targetId":   "2001",
+			"message":    "刚看到一个 有人用二战侦察相机拍了四十年冰川 十万张照片 相机63磅 从一万英尺高空拍的 照片边缘有物理仪器记录的时间和高度 比数码相机早几十年",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sender.message != "" || !strings.Contains(result.Content, "AI_TONE_TOO_HIGH") {
+		t.Fatalf("high AI-tone message should be blocked before sending: sent=%q result=%s", sender.message, result.Content)
+	}
+}
+
+func TestSendMessageAllowsLowAIToneText(t *testing.T) {
+	classifier, err := airadar.NewDefaultClassifier()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender := &recordingMessageSender{}
+	tool := sendMessageTool{sender: sender, aiToneClassifier: classifier, aiToneThreshold: 0.65}
+	result, err := tool.Execute(context.Background(), agentruntime.ToolCall{
+		Name: "send_message",
+		Arguments: map[string]any{
+			"targetType": "private",
+			"targetId":   "2001",
+			"message":    "运动戴耳机 日常戴表 苹果：两个都买 谢谢🤝",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sender.target != "private:2001" || sender.message == "" || strings.Contains(result.Content, "AI_TONE_TOO_HIGH") {
+		t.Fatalf("low AI-tone message should be sent: target=%s message=%q result=%s", sender.target, sender.message, result.Content)
+	}
+}
+
+func TestSendMessageLogsAIToneScore(t *testing.T) {
+	classifier, err := airadar.NewDefaultClassifier()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := db.OpenStore(filepath.Join(t.TempDir(), "store.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	sender := &recordingMessageSender{}
+	tool := sendMessageTool{sender: sender, store: store, aiToneClassifier: classifier, aiToneThreshold: 0.65}
+	_, err = tool.Execute(context.Background(), agentruntime.ToolCall{
+		Name: "send_message",
+		Arguments: map[string]any{
+			"targetType": "private",
+			"targetId":   "2001",
+			"message":    "运动戴耳机 日常戴表 苹果：两个都买 谢谢🤝",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs := store.Snapshot().AppLogs
+	if len(logs) == 0 {
+		t.Fatal("expected AI tone log")
+	}
+	last := logs[len(logs)-1]
+	if last.Metadata["event"] != "agent.send_message.ai_tone_checked" || last.Metadata["prob"] == nil || last.Metadata["message"] == "" {
+		t.Fatalf("unexpected AI tone log: %#v", last)
 	}
 }
 

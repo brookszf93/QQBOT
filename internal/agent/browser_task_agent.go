@@ -74,7 +74,7 @@ func (t *BrowserTaskAgentTool) Execute(ctx context.Context, call agentruntime.To
 		return browserTaskJSON(map[string]any{"ok": false, "error": "BROWSER_DISABLED", "message": "浏览器 sidecar 未启用。"}), nil
 	}
 	if t.model == nil {
-		return browserTaskJSON(map[string]any{"ok": false, "error": "BROWSER_AGENT_MODEL_MISSING", "message": "Browser Agent 模型未配置。"}), nil
+		return browserTaskJSON(map[string]any{"ok": false, "error": "BROWSER_AGENT_MODEL_MISSING", "message": "浏览器 Agent 模型未配置。"}), nil
 	}
 
 	tools := browsercap.SessionTools{
@@ -86,8 +86,7 @@ func (t *BrowserTaskAgentTool) Execute(ctx context.Context, call agentruntime.To
 	}.Catalog()
 	systemPrompt := prompts.BrowserSystemPrompt()
 	messages := []agentruntime.Message{{Role: "user", Content: prompts.BrowserInstruction(task, startURL, sessionID)}}
-	if t.systemPrompt != nil && t.contextMessages != nil {
-		systemPrompt = t.systemPrompt() + "\n\n" + prompts.BrowserSystemPrompt()
+	if t.contextMessages != nil {
 		messages = append(t.contextMessages(), agentruntime.Message{Role: "user", Content: prompts.BrowserInstruction(task, startURL, sessionID)})
 	}
 	kernel := agentruntime.ReActKernel{Model: t.model}

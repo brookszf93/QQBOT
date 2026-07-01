@@ -12,7 +12,7 @@ import (
 type CreateStoryTool struct{ Service Service }
 
 func (t CreateStoryTool) Definition() agentruntime.ToolDefinition {
-	return agentruntime.ToolDefinition{Name: "create_story", Description: "创建一条故事记忆", Parameters: agentruntime.ObjectSchema(map[string]any{"markdown": map[string]any{"type": "string"}})}
+	return agentruntime.ToolDefinition{Name: "create_story", Description: "创建一条故事记忆。", Parameters: agentruntime.ObjectSchema(map[string]any{"markdown": map[string]any{"type": "string"}})}
 }
 func (t CreateStoryTool) Kind() string { return "business" }
 func (t CreateStoryTool) Execute(ctx context.Context, call agentruntime.ToolCall) (agentruntime.ToolResult, error) {
@@ -28,14 +28,14 @@ func (t CreateStoryTool) Execute(ctx context.Context, call agentruntime.ToolCall
 type RewriteStoryTool struct{ Service Service }
 
 func (t RewriteStoryTool) Definition() agentruntime.ToolDefinition {
-	return agentruntime.ToolDefinition{Name: "rewrite_story", Description: "重写一条故事记忆", Parameters: agentruntime.ObjectSchema(map[string]any{"id": map[string]any{"type": "string"}, "markdown": map[string]any{"type": "string"}})}
+	return agentruntime.ToolDefinition{Name: "rewrite_story", Description: "重写一条故事记忆。", Parameters: agentruntime.ObjectSchema(map[string]any{"id": map[string]any{"type": "string"}, "markdown": map[string]any{"type": "string"}})}
 }
 func (t RewriteStoryTool) Kind() string { return "business" }
 func (t RewriteStoryTool) Execute(ctx context.Context, call agentruntime.ToolCall) (agentruntime.ToolResult, error) {
 	id, _ := call.Arguments["id"].(string)
 	markdown, _ := call.Arguments["markdown"].(string)
 	if id == "" {
-		return agentruntime.ToolResult{}, fmt.Errorf("id is required")
+		return agentruntime.ToolResult{}, fmt.Errorf("缺少 id")
 	}
 	story, err := t.Service.Create(ctx, Story{ID: id, Markdown: markdown})
 	if err != nil {
@@ -51,7 +51,7 @@ type SearchMemoryTool struct {
 }
 
 func (t SearchMemoryTool) Definition() agentruntime.ToolDefinition {
-	return agentruntime.ToolDefinition{Name: "search_memory", Description: "搜索故事记忆", Parameters: agentruntime.ObjectSchema(map[string]any{"query": map[string]any{"type": "string"}, "limit": map[string]any{"type": "integer"}})}
+	return agentruntime.ToolDefinition{Name: "search_memory", Description: "搜索故事记忆。", Parameters: agentruntime.ObjectSchema(map[string]any{"query": map[string]any{"type": "string"}, "limit": map[string]any{"type": "integer"}})}
 }
 func (t SearchMemoryTool) Kind() string { return "business" }
 func (t SearchMemoryTool) Execute(ctx context.Context, call agentruntime.ToolCall) (agentruntime.ToolResult, error) {
@@ -80,7 +80,7 @@ func (t SearchMemoryTool) Execute(ctx context.Context, call agentruntime.ToolCal
 type FinishStoryBatchTool struct{}
 
 func (FinishStoryBatchTool) Definition() agentruntime.ToolDefinition {
-	return agentruntime.ToolDefinition{Name: "finish_story_batch", Description: "结束当前故事批处理", Parameters: agentruntime.ObjectSchema(map[string]any{"reason": map[string]any{"type": "string"}})}
+	return agentruntime.ToolDefinition{Name: "finish_story_batch", Description: "结束当前故事批处理。", Parameters: agentruntime.ObjectSchema(map[string]any{"reason": map[string]any{"type": "string"}})}
 }
 func (FinishStoryBatchTool) Kind() string { return "control" }
 func (FinishStoryBatchTool) Execute(context.Context, agentruntime.ToolCall) (agentruntime.ToolResult, error) {

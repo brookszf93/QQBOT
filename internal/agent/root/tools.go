@@ -4,19 +4,43 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"QqBot/internal/agentruntime"
 )
 
-// EnterTool 将根会话切换到指定子状态。
+type WaitTool struct {
+	MaxWait    time.Duration
+	WaitSignal func(context.Context) bool
+}
+
+func (WaitTool) Definition() agentruntime.ToolDefinition {
+	return agentruntime.ToolDefinition{Name: "wait", Description: "沉默并等待新的外部事件。", Parameters: agentruntime.ObjectSchema(map[string]any{})}
+}
+
+func (WaitTool) Kind() string { return "control" }
+
+func (t WaitTool) Execute(ctx context.Context, _ agentruntime.ToolCall) (agentruntime.ToolResult, error) {
+	if t.WaitSignal != nil {
+		waitCtx := ctx
+		cancel := func() {}
+		if t.MaxWait > 0 {
+			waitCtx, cancel = context.WithTimeout(ctx, t.MaxWait)
+		}
+		defer cancel()
+		t.WaitSignal(waitCtx)
+	}
+	return agentruntime.ToolResult{Kind: "control", Content: "休息结束了"}, nil
+}
+
+// EnterTool switches into an app or exclusive tool environment.
 type EnterTool struct{ Session *Session }
 
 func (EnterTool) Definition() agentruntime.ToolDefinition {
 	return agentruntime.ToolDefinition{Name: "enter", Description: "进入需要独占工具环境的 App；聊天、私聊和新闻不需要进入。", Parameters: agentruntime.ObjectSchema(map[string]any{
-		"id": map[string]any{"type": "string", "description": `App id，只能是 "calc" 或 "terminal"。`, "enum": []string{"calc", "terminal"}},
-		"os": osParameterSchema(),
+		"id": map[string]any{"type": "string", "description": `App id: "todo", "novel", "projects", "browser", "music", "news", "calc", or "terminal".`, "enum": []string{"todo", "novel", "projects", "browser", "music", "news", "calc", "terminal"}},
 	})}
 }
 func (EnterTool) Kind() string { return "business" }
@@ -26,7 +50,13 @@ func (t EnterTool) Execute(_ context.Context, call agentruntime.ToolCall) (agent
 		data, _ := json.Marshal(map[string]any{"ok": true, "entered": id})
 		return agentruntime.ToolResult{Kind: "control", Content: string(data)}, nil
 	}
-	if id == "calc" || id == "terminal" {
+	if id == "" {
+		if currentApp := t.Session.App(); currentApp != "" {
+			data, _ := json.Marshal(t.Session.EnterApp(currentApp))
+			return agentruntime.ToolResult{Kind: "control", Content: string(data)}, nil
+		}
+	}
+	if isAppID(id) {
 		data, _ := json.Marshal(t.Session.EnterApp(id))
 		return agentruntime.ToolResult{Kind: "control", Content: string(data)}, nil
 	}
@@ -34,13 +64,11 @@ func (t EnterTool) Execute(_ context.Context, call agentruntime.ToolCall) (agent
 	return agentruntime.ToolResult{Kind: "control", Content: string(data)}, nil
 }
 
-// BackToPortalTool 将状态导航重置到 portal。
+// BackToPortalTool moves one navigation step back.
 type BackToPortalTool struct{ Session *Session }
 
 func (BackToPortalTool) Definition() agentruntime.ToolDefinition {
-	return agentruntime.ToolDefinition{Name: "back", Description: "退出当前焦点状态并返回上一级状态", Parameters: agentruntime.ObjectSchema(map[string]any{
-		"os": osParameterSchema(),
-	})}
+	return agentruntime.ToolDefinition{Name: "back", Description: "退出当前焦点并返回上一层。", Parameters: agentruntime.ObjectSchema(map[string]any{})}
 }
 func (BackToPortalTool) Kind() string { return "business" }
 func (t BackToPortalTool) Execute(context.Context, agentruntime.ToolCall) (agentruntime.ToolResult, error) {
@@ -51,13 +79,11 @@ func (t BackToPortalTool) Execute(context.Context, agentruntime.ToolCall) (agent
 	return agentruntime.ToolResult{Kind: "control", Content: string(data)}, nil
 }
 
-// AppBackToPortalTool 退出当前 App 回到 Portal 桌面。
+// AppBackToPortalTool exits the current app and returns to the portal.
 type AppBackToPortalTool struct{ Session *Session }
 
 func (AppBackToPortalTool) Definition() agentruntime.ToolDefinition {
-	return agentruntime.ToolDefinition{Name: "back_to_portal", Description: "退出当前 App 返回桌面（Portal）。仅当目前在某个 App 里时调用。", Parameters: agentruntime.ObjectSchema(map[string]any{
-		"os": osParameterSchema(),
-	})}
+	return agentruntime.ToolDefinition{Name: "back_to_portal", Description: "退出当前 App 返回桌面。", Parameters: agentruntime.ObjectSchema(map[string]any{})}
 }
 func (AppBackToPortalTool) Kind() string { return "business" }
 func (t AppBackToPortalTool) Execute(context.Context, agentruntime.ToolCall) (agentruntime.ToolResult, error) {
@@ -68,11 +94,11 @@ func (t AppBackToPortalTool) Execute(context.Context, agentruntime.ToolCall) (ag
 	return agentruntime.ToolResult{Kind: "control", Content: string(data)}, nil
 }
 
-// HelpTool 返回当前 App 的能力说明。
+// HelpTool returns a concise description of the current app.
 type HelpTool struct{ Session *Session }
 
 func (HelpTool) Definition() agentruntime.ToolDefinition {
-	return agentruntime.ToolDefinition{Name: "help", Description: "查询当前所在 App 的能力说明。不在任何 App 里时返回提示。", Parameters: agentruntime.ObjectSchema(map[string]any{})}
+	return agentruntime.ToolDefinition{Name: "help", Description: "查看当前 App 的能力说明。", Parameters: agentruntime.ObjectSchema(map[string]any{})}
 }
 func (HelpTool) Kind() string { return "business" }
 func (t HelpTool) Execute(context.Context, agentruntime.ToolCall) (agentruntime.ToolResult, error) {
@@ -82,78 +108,210 @@ func (t HelpTool) Execute(context.Context, agentruntime.ToolCall) (agentruntime.
 		currentApp = t.Session.CurrentApp
 		t.Session.mu.Unlock()
 	}
-	switch currentApp {
-	case "":
-		return agentruntime.ToolResult{Kind: "control", Content: "你不在任何 App 里。先用 enter 进入一个 App，再调用 help 查看那个 App 能做什么。"}, nil
-	case "calc":
-		return agentruntime.ToolResult{Kind: "control", Content: strings.Join([]string{
-			"你在 calc App 里。当前可调用工具：",
-			"  - calculate(a, op, b): 对两个有限实数做一次二元四则运算。op 取值: +, -, *, /",
-			"",
-			"需要复合运算（例如 1 + 2 * 3）时，按运算优先级分多次调用：",
-			`  1. calculate(a=2, op="*", b=3) -> 6`,
-			`  2. calculate(a=1, op="+", b=6) -> 7`,
-			"",
-			"调 back_to_portal 退出本 App 回到桌面。",
-		}, "\n")}, nil
-	case "terminal":
-		cwd := ""
-		if t.Session != nil {
-			t.Session.mu.Lock()
-			cwd = t.Session.TerminalCWD
-			t.Session.mu.Unlock()
-		}
-		if cwd == "" {
-			cwd = "(未初始化)"
-		}
-		return agentruntime.ToolResult{Kind: "control", Content: strings.Join([]string{
-			fmt.Sprintf("你在终端 App 里。当前工作目录：%s", cwd),
-			"",
-			"可调用工具：",
-			"  - bash(command): 执行一条完整 shell 命令。单条 cd <dir> 会被拦截并更新工作目录；不支持交互式命令。",
-			"  - read_bash_output(outputId): 读取上一条 bash 的完整输出。",
-			"",
-			"调 back_to_portal 退出本 App 回到桌面。",
-		}, "\n")}, nil
+	if currentApp == "" {
+		return agentruntime.ToolResult{Kind: "control", Content: "你不在任何 App 里。可用 enter 进入 todo、novel、projects、browser、music、news、calc 或 terminal。"}, nil
+	}
+	return agentruntime.ToolResult{Kind: "control", Content: "当前在 " + currentApp + " App。使用 personal_screen 查看状态；完成后可 back_to_portal。"}, nil
+}
+
+type ActTool struct {
+	Wait   WaitTool
+	Invoke InvokeTool
+}
+
+func (ActTool) Definition() agentruntime.ToolDefinition {
+	return agentruntime.ToolDefinition{
+		Name:        "act",
+		Description: "统一行动入口。选择 action 后分发到 wait、send_message、analyze_image、detect_ai_tone、browser、search_web、searchMagnetFromWeb、open_ithome_article 或个人 App。",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"action": map[string]any{
+					"type":        "string",
+					"description": "本轮动作。沉默选 wait；发言选 send_message；其它能力填对应 action。",
+					"enum": []string{
+						"wait",
+						"enter",
+						"back_to_portal",
+						"help",
+						"send_message",
+						"analyze_image",
+						"detect_ai_tone",
+						"browser",
+						"search_web",
+						"search_memory",
+						"searchMagnetFromWeb",
+						"open_ithome_article",
+						"personal_screen",
+						"todo_app",
+						"novel_app",
+						"project_app",
+						"music_app",
+						"news_app",
+						"activity_app",
+						"calculate",
+						"bash",
+						"read_bash_output",
+					},
+				},
+				"message":     map[string]any{"type": "string", "description": "action=send_message 时要发送到 QQ 的文本。"},
+				"targetType":  map[string]any{"type": "string", "enum": []string{"group", "private"}, "description": "action=send_message 时的回复路由类型。"},
+				"targetId":    map[string]any{"type": "string", "description": "action=send_message 时的回复路由 ID。"},
+				"imagePath":   map[string]any{"type": "string", "description": "action=send_message 时可发送的受控本地图片路径，或图片分析工具需要的路径。"},
+				"messageId":   map[string]any{"type": "integer", "description": "action=analyze_image 时可指定 QQ 消息 ID。"},
+				"text":        map[string]any{"type": "string", "description": "action=detect_ai_tone 时要检测的草稿；App action 时也可作为正文、笔记或任务文本。"},
+				"threshold":   map[string]any{"type": "number", "description": "action=detect_ai_tone 时的 AI 腔调阈值，默认 0.65。"},
+				"query":       map[string]any{"type": "string", "description": "搜索、浏览器、记忆检索或 enter app id。"},
+				"articleId":   map[string]any{"type": "integer", "description": "action=open_ithome_article 时的文章 ID。"},
+				"prompt":      map[string]any{"type": "string", "description": "图片、浏览器等工具的可选任务说明。"},
+				"action_text": map[string]any{"type": "string", "description": "App 子动作，例如 novel_app 的 upsert_entry/screen/create_project/open_project/append_draft。"},
+				"projectId":   map[string]any{"type": "string", "description": "App 项目 ID。"},
+				"title":       map[string]any{"type": "string", "description": "创建或选择项目时的标题。"},
+				"todoId":      map[string]any{"type": "string", "description": "待办 ID。"},
+				"dueAt":       map[string]any{"type": "string", "description": "todo 截止时间，可选。"},
+				"status":      map[string]any{"type": "string", "description": "状态，可选：open/done/paused/dropped。"},
+			},
+			"additionalProperties": true,
+		},
+	}
+}
+
+func (ActTool) Kind() string { return "business" }
+
+func (t ActTool) Execute(ctx context.Context, call agentruntime.ToolCall) (agentruntime.ToolResult, error) {
+	action := canonicalActAction(commonString(call.Arguments["action"]))
+	if action == "" && strings.TrimSpace(commonString(call.Arguments["message"])) != "" {
+		action = "send_message"
+	}
+	if action == "" {
+		return jsonToolResult("business", map[string]any{
+			"ok":      false,
+			"error":   "ACT_ACTION_REQUIRED",
+			"message": "act 需要先选择 action；如果不该说话，请选择 wait。",
+		}), nil
+	}
+	if action == "wait" {
+		return t.Wait.Execute(ctx, agentruntime.ToolCall{
+			ID:        call.ID + ":wait",
+			Name:      "wait",
+			Arguments: actDelegatedArguments(call.Arguments, action),
+		})
+	}
+	args := actDelegatedArguments(call.Arguments, action)
+	args["tool"] = action
+	result, err := t.Invoke.Execute(ctx, agentruntime.ToolCall{
+		ID:        call.ID + ":act",
+		Name:      "invoke",
+		Arguments: args,
+	})
+	if err != nil || action != "enter" {
+		return result, err
+	}
+	return t.enterWithScreen(ctx, call, result)
+}
+
+func (t ActTool) enterWithScreen(ctx context.Context, call agentruntime.ToolCall, enterResult agentruntime.ToolResult) (agentruntime.ToolResult, error) {
+	var payload map[string]any
+	if json.Unmarshal([]byte(enterResult.Content), &payload) != nil || payload["ok"] != true {
+		return enterResult, nil
+	}
+	app := commonString(payload["enteredApp"])
+	if app == "" {
+		return enterResult, nil
+	}
+	screenArgs := map[string]any{"tool": "personal_screen", "app": app}
+	screenResult, err := t.Invoke.Execute(ctx, agentruntime.ToolCall{
+		ID:        call.ID + ":screen",
+		Name:      "invoke",
+		Arguments: screenArgs,
+	})
+	if err != nil {
+		return enterResult, nil
+	}
+	payload["screenResult"] = screenResult.Content
+	return jsonToolResult(enterResult.Kind, payload), nil
+}
+
+func canonicalActAction(action string) string {
+	action = strings.TrimSpace(action)
+	switch action {
+	case "send", "sendMessage", "send_group_message", "send_private_message":
+		return "send_message"
+	case "searchMagnet", "search_magnet", "magnet_search":
+		return "searchMagnetFromWeb"
+	case "open_ithome", "ithome", "open_article":
+		return "open_ithome_article"
+	case "ai_tone", "detectAI":
+		return "detect_ai_tone"
+	case "back", "portal":
+		return "back_to_portal"
 	default:
-		return agentruntime.ToolResult{Kind: "control", Content: fmt.Sprintf("当前所在 App %q 已找不到。可能被卸载或重启过，建议先 back_to_portal。", currentApp)}, nil
+		return action
 	}
 }
 
-// WaitTool 阻塞当前 Agent 轮次，直到收到新事件或超时。
-type WaitTool struct {
-	Queue      *agentruntime.EventQueue[any]
-	MaxWait    time.Duration
-	WaitSignal func(context.Context) bool
+func actDelegatedArguments(source map[string]any, action string) map[string]any {
+	args := make(map[string]any, len(source)+1)
+	for key, value := range source {
+		if key == "action" {
+			continue
+		}
+		args[key] = value
+	}
+	if _, ok := args["action"]; !ok && isAppAction(action) {
+		for _, key := range []string{"action_text", "subaction", "operation", "op"} {
+			if value := commonString(args[key]); strings.TrimSpace(value) != "" {
+				args["action"] = normalizeAppSubaction(action, value)
+				break
+			}
+		}
+	}
+	return args
 }
 
-func (WaitTool) Definition() agentruntime.ToolDefinition {
-	return agentruntime.ToolDefinition{Name: "wait", Description: "暂停行动，直到新的外部事件出现或等待自然结束。", Parameters: agentruntime.ObjectSchema(map[string]any{
-		"os": osParameterSchema(),
-	})}
-}
-func (WaitTool) Kind() string { return "control" }
-func (t WaitTool) Execute(ctx context.Context, call agentruntime.ToolCall) (agentruntime.ToolResult, error) {
-	_ = call
-	timeout := t.MaxWait
-	if timeout <= 0 {
-		timeout = 10 * time.Minute
+func isAppAction(action string) bool {
+	switch action {
+	case "todo_app", "novel_app", "project_app", "music_app", "news_app", "activity_app":
+		return true
+	default:
+		return false
 	}
-	waitCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	if t.WaitSignal != nil {
-		t.WaitSignal(waitCtx)
-		return agentruntime.ToolResult{Kind: "control", Content: "休息结束了"}, nil
-	}
-	if t.Queue == nil {
-		<-waitCtx.Done()
-		return agentruntime.ToolResult{Kind: "control", Content: "休息结束了"}, nil
-	}
-	_, _ = t.Queue.Wait(waitCtx)
-	return agentruntime.ToolResult{Kind: "control", Content: "休息结束了"}, nil
 }
 
-// InvokeTool 允许根 Agent 通过受控入口调用业务工具。
+func normalizeAppSubaction(appAction, subaction string) string {
+	subaction = strings.TrimSpace(subaction)
+	switch appAction {
+	case "novel_app":
+		switch subaction {
+		case "list":
+			return "list_projects"
+		case "create":
+			return "create_project"
+		case "open":
+			return "open_project"
+		case "draft", "write":
+			return "append_draft"
+		case "note":
+			return "append_note"
+		case "outline":
+			return "update_outline"
+		}
+	case "project_app":
+		switch subaction {
+		case "list_projects":
+			return "list"
+		case "create_project":
+			return "create"
+		case "note":
+			return "append_note"
+		case "journal":
+			return "append_journal"
+		}
+	}
+	return subaction
+}
+
+// InvokeTool dispatches act actions to owned business tools.
 type InvokeTool struct {
 	Owners []InvokeSubtoolOwner
 }
@@ -192,7 +350,11 @@ func (t DirectSubtool) Execute(ctx context.Context, call agentruntime.ToolCall) 
 			return invokeGuardResult(t.DefinitionValue.Name, guard), nil
 		}
 	}
-	return t.Owner.ExecuteSubtool(ctx, t.DefinitionValue.Name, call.Arguments, call)
+	args := call.Arguments
+	if isAppAction(t.DefinitionValue.Name) {
+		args = actDelegatedArguments(call.Arguments, t.DefinitionValue.Name)
+	}
+	return t.Owner.ExecuteSubtool(ctx, t.DefinitionValue.Name, args, call)
 }
 
 func (o CatalogSubtoolOwner) ListOwnedTools() []agentruntime.ToolDefinition {
@@ -241,12 +403,11 @@ func (o CatalogSubtoolOwner) ExecuteSubtool(ctx context.Context, name string, ar
 func (InvokeTool) Definition() agentruntime.ToolDefinition {
 	return agentruntime.ToolDefinition{
 		Name:        "invoke",
-		Description: "调用一个动态子工具。子工具名通过 tool 字段指定，其余字段按目标子工具自身的参数规约传入。子工具的清单和参数说明不在 system prompt 里固定枚举；如果调错或不熟悉，错误返回里会包含当前可用工具的说明。",
+		Description: "内部 action 分发器。主模型应调用 act，不要直接调用本工具。",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"tool": map[string]any{"type": "string", "description": "要调用的子工具名。"},
-				"os":   osParameterSchema(),
+				"tool": map[string]any{"type": "string", "description": "要分发到的 action 名。"},
 			},
 			"additionalProperties": true,
 		},
@@ -294,7 +455,7 @@ func (t InvokeTool) Execute(ctx context.Context, call agentruntime.ToolCall) (ag
 		for _, definition := range definitionByTool {
 			definitions = append(definitions, definition)
 		}
-		data, _ := json.Marshal(map[string]any{"ok": false, "error": "INVOKE_TOOL_NOT_FOUND", "tool": name, "message": "invoke 子工具 " + name + " 不存在。\n" + availableInvokeToolsDescription(definitions), "availableTools": definitionNames(definitions)})
+		data, _ := json.Marshal(map[string]any{"ok": false, "error": "ACTION_NOT_FOUND", "tool": name, "message": "action " + name + " 不存在。\n" + availableInvokeToolsDescription(definitions), "availableTools": definitionNames(definitions)})
 		return agentruntime.ToolResult{Kind: "business", Content: string(data)}, nil
 	}
 	guard := owner.CanInvokeNow(name)
@@ -316,6 +477,11 @@ func invokeGuardResult(name string, guard InvokeGuard) agentruntime.ToolResult {
 	}
 	data, _ := json.Marshal(payload)
 	return agentruntime.ToolResult{Kind: "business", Content: string(data)}
+}
+
+func jsonToolResult(kind string, payload map[string]any) agentruntime.ToolResult {
+	data, _ := json.Marshal(payload)
+	return agentruntime.ToolResult{Kind: kind, Content: string(data)}
 }
 
 func filterToolDefinitions(definitions []agentruntime.ToolDefinition, names []string) []agentruntime.ToolDefinition {
@@ -342,9 +508,9 @@ func definitionNames(definitions []agentruntime.ToolDefinition) []string {
 
 func availableInvokeToolsDescription(definitions []agentruntime.ToolDefinition) string {
 	if len(definitions) == 0 {
-		return "当前没有可用的 invoke 子工具。"
+		return "当前没有可用 action。"
 	}
-	return "当前可用的 invoke 工具说明：\n" + renderInvokeToolGuide(definitions)
+	return "当前可用 action 说明：\n" + renderInvokeToolGuide(definitions)
 }
 
 func enrichSubtoolFailureContent(name, content string, definition agentruntime.ToolDefinition) string {
@@ -358,13 +524,13 @@ func enrichSubtoolFailureContent(name, content string, definition agentruntime.T
 	message := commonString(data["message"])
 	if message == "" {
 		if errName := commonString(data["error"]); errName != "" {
-			message = "invoke 子工具 " + name + " 调用失败：" + errName + "。"
+			message = "action " + name + " 调用失败：" + errName + "。"
 		} else {
-			message = "invoke 子工具 " + name + " 调用失败。"
+			message = "action " + name + " 调用失败。"
 		}
 	}
 	if definition.Name != "" {
-		message += "\n当前子工具说明：\n" + renderInvokeToolGuide([]agentruntime.ToolDefinition{definition})
+		message += "\n当前 action 说明：\n" + renderInvokeToolGuide([]agentruntime.ToolDefinition{definition})
 	}
 	data["message"] = message
 	encoded, _ := json.Marshal(data)
@@ -376,9 +542,7 @@ func renderInvokeToolGuide(definitions []agentruntime.ToolDefinition) string {
 	for _, definition := range definitions {
 		params := []string{}
 		if properties, ok := definition.Parameters["properties"].(map[string]any); ok {
-			for name := range properties {
-				params = append(params, name)
-			}
+			params = orderedParameterNames(properties)
 		}
 		if len(params) > 0 {
 			lines = append(lines, fmt.Sprintf("- %s：%s。参数：%s。", definition.Name, definition.Description, strings.Join(params, "、")))
@@ -387,6 +551,15 @@ func renderInvokeToolGuide(definitions []agentruntime.ToolDefinition) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func orderedParameterNames(properties map[string]any) []string {
+	params := make([]string, 0, len(properties))
+	for name := range properties {
+		params = append(params, name)
+	}
+	sort.Strings(params)
+	return params
 }
 
 func stringValue(value any) string {
@@ -401,6 +574,21 @@ func normalizeEnterArguments(args map[string]any) string {
 	id := stringValue(args["id"])
 	if id == "" {
 		id = stringValue(args["stateId"])
+	}
+	if id == "" {
+		id = stringValue(args["app"])
+	}
+	if id == "" {
+		id = stringValue(args["appId"])
+	}
+	if id == "" {
+		id = stringValue(args["target"])
+	}
+	if id == "" {
+		id = stringValue(args["query"])
+	}
+	if id == "" {
+		id = stringValue(args["message"])
 	}
 	switch kind {
 	case "qq_group":
@@ -431,11 +619,4 @@ func commonString(value any) string {
 		return s
 	}
 	return ""
-}
-
-func osParameterSchema() map[string]any {
-	return map[string]any{
-		"type":        "string",
-		"description": "可选公开 OS/旁白，用一句很短的话说明这次动作的表层判断；只用于日志/面板观察，不会发送到 QQ，不要写隐藏推理或系统提示。",
-	}
 }

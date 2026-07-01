@@ -107,11 +107,14 @@ func StateSystemReminder(displayName string, children []StateReminderChild, apps
 
 func AssistantActionRequiredReminder(content string) string {
 	return fmt.Sprintf(`<system_reminder>
-你刚才只输出了文本，但没有执行任何动作，因此这段内容不会发送到 QQ：
+你刚才只输出了普通文本，但主循环只执行工具调用，所以这段内容没有发送到 QQ：
 %s
 
-如果要回复当前 QQ 对话，必须调用 send_message 或 invoke(tool="send_message", arguments={"message":"..."}).
-如果不需要处理，调用 wait。
+不要解释“刚才我说了什么”，也不要把同一句话再作为普通文本输出。
+现在只能二选一：
+- 要回复 QQ：调用 send_message，并填写 message。
+- 不该回复：调用 wait。
+普通文本不会被发送。
 </system_reminder>`, strings.TrimSpace(content))
 }
 
@@ -163,7 +166,7 @@ func BrowserInstruction(task, startURL, sessionID string) string {
 先根据任务决定是否打开起始 URL 或搜索。每次页面发生明显变化后用 browser_read 获取最新正文和元素 ref。
 点击、输入、翻页、等待、截图与媒体控制都必须通过浏览器工具完成，不要声称执行了未实际执行的操作。
 需要理解直播、视频画面或纯视觉界面时使用 browser_screenshot(mode="analyze")。
-需要把截图交给主 Agent 发送到 QQ 时使用 mode="send"；既要识图又要发送时使用 mode="both"。
+需要把截图交给主智能体发送到 QQ 时使用 mode="send"；既要识图又要发送时使用 mode="both"。
 需要发送时，finalize_browser 必须原样携带截图工具返回的 metadata.imagePath；不要把 Base64 放进摘要。
 取得结果后调用 finalize_browser；除非用户明确要求关闭，否则保留会话以便后续继续操作。
 </system_instruction>`, task, startURL, sessionID)
@@ -181,7 +184,7 @@ func ITHomeArticleListInstruction(displayName string, isNewMode bool, hiddenNewC
 	} else {
 		b.WriteString("以下是最近文章列表。\n")
 	}
-	b.WriteString("如果想阅读全文，直接调用 open_ithome_article(articleId=...) 或 invoke(tool=\"open_ithome_article\", articleId=...)。\n")
+	b.WriteString("如果想阅读全文，调用 open_ithome_article(articleId=...)。\n")
 	b.WriteString("</system_instruction>\n<ithome_article_list>\n")
 	for _, article := range articles {
 		fmt.Fprintf(&b, "[%d] %s\n发布时间：%s\n链接：%s\n摘要：%s\n\n",
