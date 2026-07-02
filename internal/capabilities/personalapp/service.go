@@ -82,14 +82,15 @@ type stateFile struct {
 }
 
 type Screen struct {
-	App        string         `json:"app"`
-	State      stateFile      `json:"state"`
-	Projects   []Project      `json:"projects,omitempty"`
-	Todos      []TodoItem     `json:"todos,omitempty"`
-	Music      []MusicItem    `json:"music,omitempty"`
-	News       []NewsNote     `json:"news,omitempty"`
-	Activities []ActivityItem `json:"activities,omitempty"`
-	Markdown   string         `json:"markdown,omitempty"`
+	App        string             `json:"app"`
+	State      stateFile          `json:"state"`
+	Projects   []Project          `json:"projects,omitempty"`
+	Todos      []TodoItem         `json:"todos,omitempty"`
+	Music      []MusicItem        `json:"music,omitempty"`
+	News       []NewsNote         `json:"news,omitempty"`
+	Activities []ActivityItem     `json:"activities,omitempty"`
+	Markdown   string             `json:"markdown,omitempty"`
+	Workspace  *WorkspaceOverview `json:"workspace,omitempty"`
 }
 
 type NovelEntry struct {
@@ -100,6 +101,23 @@ type NovelEntry struct {
 	Draft     string  `json:"draft,omitempty"`
 	Journal   string  `json:"journal,omitempty"`
 	Truncated bool    `json:"truncated,omitempty"`
+}
+
+type WorkspaceFile struct {
+	Kind      string `json:"kind"`
+	Path      string `json:"path"`
+	Title     string `json:"title"`
+	UpdatedAt string `json:"updatedAt"`
+	Preview   string `json:"preview,omitempty"`
+}
+
+type WorkspaceOverview struct {
+	Root               string          `json:"root"`
+	Sections           map[string]int  `json:"sections"`
+	Recent             []WorkspaceFile `json:"recent"`
+	CurrentActivity    *ActivityItem   `json:"currentActivity,omitempty"`
+	ActiveNovelProject *Project        `json:"activeNovelProject,omitempty"`
+	Scratchpad         string          `json:"scratchpad,omitempty"`
 }
 
 func NewService(root string) *Service {
@@ -121,6 +139,9 @@ func (s *Service) Screen(app string) (Screen, error) {
 	state, _ := s.loadState()
 	screen := Screen{App: app}
 	switch app {
+	case "workspace":
+		overview, _ := s.workspaceOverviewLocked()
+		screen.Workspace = &overview
 	case "todo":
 		screen.Todos, _ = s.loadTodos()
 	case "novel":
@@ -217,6 +238,51 @@ func (s *Service) ListNovelEntries() ([]NovelEntry, error) {
 		entries = append(entries, entry)
 	}
 	return entries, nil
+}
+
+func (s *Service) WorkspaceOverview() (WorkspaceOverview, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ensure(); err != nil {
+		return WorkspaceOverview{}, err
+	}
+	return s.workspaceOverviewLocked()
+}
+
+func (s *Service) WriteWorkspaceEntry(kind, title, text string, tags []string) (WorkspaceFile, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ensure(); err != nil {
+		return WorkspaceFile{}, err
+	}
+	kind = cleanWorkspaceKind(kind)
+	title = strings.TrimSpace(title)
+	text = strings.TrimSpace(text)
+	if title == "" {
+		title = defaultWorkspaceTitle(kind)
+	}
+	if text == "" {
+		return WorkspaceFile{}, errors.New("text is required")
+	}
+	dir := s.workspaceDir(kind)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return WorkspaceFile{}, err
+	}
+	name := uniqueID(kind, title) + ".md"
+	path := filepath.Join(dir, name)
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s\n\n", title)
+	fmt.Fprintf(&b, "- 时间：%s\n", nowText())
+	if cleanedTags := cleanTags(tags); len(cleanedTags) > 0 {
+		fmt.Fprintf(&b, "- 标签：%s\n", strings.Join(cleanedTags, ", "))
+	}
+	b.WriteString("\n")
+	b.WriteString(text)
+	b.WriteString("\n")
+	if err := os.WriteFile(path, []byte(b.String()), 0644); err != nil {
+		return WorkspaceFile{}, err
+	}
+	return s.workspaceFileFromPathLocked(kind, path), nil
 }
 
 func (s *Service) OpenNovelProject(projectID string) (Project, error) {
@@ -560,12 +626,96 @@ func (s *Service) UpsertNovelEntry(projectID, title, text, file string) (Project
 }
 
 func (s *Service) ensure() error {
-	for _, dir := range []string{s.root, s.projectsDir()} {
+	for _, dir := range []string{s.root, s.projectsDir(), s.workspaceDir("journal"), s.workspaceDir("drafts"), s.workspaceDir("reading"), s.workspaceDir("music")} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return err
 		}
 	}
+	scratchpad := s.scratchpadPath()
+	if _, err := os.Stat(scratchpad); os.IsNotExist(err) {
+		if err := os.WriteFile(scratchpad, []byte("# Scratchpad\n"), 0644); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func (s *Service) workspaceOverviewLocked() (WorkspaceOverview, error) {
+	overview := WorkspaceOverview{
+		Root:     s.root,
+		Sections: map[string]int{},
+	}
+	for _, kind := range []string{"journal", "drafts", "reading", "music"} {
+		files := s.listWorkspaceFilesLocked(kind)
+		overview.Sections[kind] = len(files)
+		overview.Recent = append(overview.Recent, files...)
+	}
+	sort.Slice(overview.Recent, func(i, j int) bool { return overview.Recent[i].UpdatedAt > overview.Recent[j].UpdatedAt })
+	if len(overview.Recent) > 12 {
+		overview.Recent = overview.Recent[:12]
+	}
+	if activities, err := s.loadActivities(); err == nil {
+		for _, activity := range activities {
+			if activity.Status == "active" {
+				copied := activity
+				overview.CurrentActivity = &copied
+				break
+			}
+		}
+	}
+	if active, ok := s.activeNovelProjectLocked(); ok {
+		copied := active
+		overview.ActiveNovelProject = &copied
+	}
+	if data, err := os.ReadFile(s.scratchpadPath()); err == nil {
+		overview.Scratchpad = trimWorkspacePreview(string(data), 1200)
+	}
+	return overview, nil
+}
+
+func (s *Service) listWorkspaceFilesLocked(kind string) []WorkspaceFile {
+	dir := s.workspaceDir(kind)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	out := []WorkspaceFile{}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".md") {
+			continue
+		}
+		out = append(out, s.workspaceFileFromPathLocked(kind, filepath.Join(dir, entry.Name())))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt > out[j].UpdatedAt })
+	return out
+}
+
+func (s *Service) workspaceFileFromPathLocked(kind, path string) WorkspaceFile {
+	info, _ := os.Stat(path)
+	updated := ""
+	if info != nil {
+		updated = info.ModTime().Format(time.RFC3339)
+	}
+	data, _ := os.ReadFile(path)
+	title := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "# ") {
+			title = strings.TrimSpace(strings.TrimPrefix(line, "# "))
+			break
+		}
+	}
+	rel, err := filepath.Rel(s.root, path)
+	if err != nil {
+		rel = path
+	}
+	return WorkspaceFile{
+		Kind:      kind,
+		Path:      filepath.ToSlash(rel),
+		Title:     title,
+		UpdatedAt: updated,
+		Preview:   trimWorkspacePreview(string(data), 500),
+	}
 }
 
 func (s *Service) projectDigestLocked(projectID string) string {
@@ -614,6 +764,10 @@ func (s *Service) activitiesPath() string      { return filepath.Join(s.root, "a
 func (s *Service) projectsPath() string        { return filepath.Join(s.root, "projects.json") }
 func (s *Service) projectsDir() string         { return filepath.Join(s.root, "projects") }
 func (s *Service) projectDir(id string) string { return filepath.Join(s.projectsDir(), cleanID(id)) }
+func (s *Service) workspaceDir(kind string) string {
+	return filepath.Join(s.root, cleanWorkspaceKind(kind))
+}
+func (s *Service) scratchpadPath() string { return filepath.Join(s.root, "scratchpad.md") }
 
 func (s *Service) loadState() (stateFile, error) {
 	var state stateFile
@@ -866,6 +1020,46 @@ func defaultActivityTitle(kind string) string {
 	default:
 		return "想法"
 	}
+}
+
+func cleanWorkspaceKind(kind string) string {
+	switch cleanID(kind) {
+	case "journal", "journals", "diary", "thought", "idea":
+		return "journal"
+	case "draft", "drafts", "writing", "novel", "essay":
+		return "drafts"
+	case "read", "reading", "news", "article":
+		return "reading"
+	case "music", "song", "listen":
+		return "music"
+	default:
+		return "journal"
+	}
+}
+
+func defaultWorkspaceTitle(kind string) string {
+	switch cleanWorkspaceKind(kind) {
+	case "drafts":
+		return "一小段草稿"
+	case "reading":
+		return "阅读摘记"
+	case "music":
+		return "听歌记录"
+	default:
+		return "随手记"
+	}
+}
+
+func trimWorkspacePreview(text string, limit int) string {
+	text = strings.TrimSpace(text)
+	if limit <= 0 || text == "" {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	return string(runes[:limit-1]) + "…"
 }
 
 func uniqueID(prefix, text string) string {

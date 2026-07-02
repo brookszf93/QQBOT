@@ -131,8 +131,14 @@ type AgentRuntime struct {
 	storyRecallRunning  bool
 	autonomousRounds    int
 	autonomousPending   bool
+	autonomousReminder  string
 	autonomousTimer     *time.Timer
 	autonomousUntil     *time.Time
+	lastRhythmSignal    *DashboardRhythmSignal
+	lastToolGuardEvent  *DashboardToolGuardEvent
+	lastCreativeRhythm  *time.Time
+	lastReviewRhythm    *time.Time
+	lastNewsRhythm      *time.Time
 }
 
 type RuntimeError struct {
@@ -161,6 +167,22 @@ type DashboardLlmCall struct {
 	ToolCallNames           []string `json:"toolCallNames"`
 	TotalTokens             *int     `json:"totalTokens"`
 	UpdatedAt               string   `json:"updatedAt"`
+}
+
+type DashboardRhythmSignal struct {
+	Kind             string   `json:"kind"`
+	Reason           string   `json:"reason"`
+	SuggestedActions []string `json:"suggestedActions"`
+	IdleForMs        int64    `json:"idleForMs"`
+	CreatedAt        string   `json:"createdAt"`
+}
+
+type DashboardToolGuardEvent struct {
+	Rule      string `json:"rule"`
+	Tool      string `json:"tool"`
+	Signature string `json:"signature,omitempty"`
+	Message   string `json:"message"`
+	UpdatedAt string `json:"updatedAt"`
 }
 
 func NewAgentRuntime(cfg *config.Config, store *db.Store, events *EventQueue, llmClient *llm.LLMClient, sender messaging.Sender) *AgentRuntime {
@@ -268,6 +290,7 @@ func (a *AgentRuntime) Start(ctx context.Context) {
 
 	go a.runAgentTaskWorker(ctx)
 	a.scheduleStoryBatch()
+	go a.runAutonomousIdleWatcher(ctx)
 	go func() {
 		continueRound := false
 		for {
@@ -286,6 +309,168 @@ func (a *AgentRuntime) Start(ctx context.Context) {
 			a.markRootLoopIdle()
 		}
 	}()
+}
+
+func (a *AgentRuntime) runAutonomousIdleWatcher(ctx context.Context) {
+	cfg := a.cfg.Server.Agent.Autonomous
+	if !cfg.Enabled {
+		return
+	}
+	idleDelay := autonomousIdleDelay(cfg)
+	tick := autonomousIdleWatchInterval(idleDelay)
+	timer := time.NewTimer(tick)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			now := time.Now()
+			if a.shouldQueueAutonomousIdleWake(now, idleDelay) {
+				signal := a.nextRhythmSignal(now, idleDelay)
+				a.events.Enqueue(AgentEvent{
+					Type: "wake",
+					Data: map[string]any{
+						"reason":  "self_continuation",
+						"source":  "rhythm_scheduler",
+						"rhythm":  signal.Kind,
+						"message": signal.Reason,
+						"actions": signal.SuggestedActions,
+					},
+				})
+				a.store.Log("info", "Agent rhythm wake queued", map[string]any{
+					"event":      "agent.root.rhythm.queued",
+					"rhythm":     signal.Kind,
+					"idleForMs":  signal.IdleForMs,
+					"idleDelay":  int(idleDelay.Milliseconds()),
+					"suggestion": signal.SuggestedActions,
+				})
+			}
+			timer.Reset(tick)
+		}
+	}
+}
+
+func (a *AgentRuntime) nextRhythmSignal(now time.Time, idleDelay time.Duration) DashboardRhythmSignal {
+	idleFor := idleDelay
+	a.mu.Lock()
+	if a.lastActivity != nil {
+		idleFor = now.Sub(*a.lastActivity)
+	}
+	a.mu.Unlock()
+	overview := personalapp.WorkspaceOverview{}
+	if a.personal != nil {
+		if loaded, err := a.personal.WorkspaceOverview(); err == nil {
+			overview = loaded
+		}
+	}
+	kind := "quiet"
+	reason := "外界暂时安静，可以选择做一小步自己的事，也可以 wait。"
+	actions := []string{"没有明确想做的事就 wait", "有灵感就写一小段随笔", "可以整理项目或待办"}
+	if overview.CurrentActivity != nil {
+		kind = "continue"
+		reason = "你有一个未完成的活动：" + overview.CurrentActivity.Title + "。可以继续一个明确步骤，或者 finish 活动。"
+		actions = []string{"继续当前活动的一小步", "完成活动并记录结果", "如果不想继续就 wait"}
+	} else if a.rhythmDue(now, "creative") {
+		kind = "creative"
+		reason = "到了适合写一点自己的东西的安静时刻。"
+		actions = []string{"用 novel_app 写随笔/灵感", "用 activity_app start 记录写作活动", "没有想法就 wait"}
+	} else if a.rhythmDue(now, "news") && a.unreadNewsCount() > 0 {
+		kind = "news"
+		reason = "有未读新闻，且到了适合阅读摘记的节奏。"
+		actions = []string{"用 open_ithome_article 看一篇新闻", "用 news_app 保存 takeaway", "不想读就 wait"}
+	} else if a.rhythmDue(now, "review") {
+		kind = "review"
+		reason = "到了适合整理自己工作台的节奏。"
+		actions = []string{"用 workspace_app 看文件工作台总览", "整理 todo/project/music/news 中的一小项", "没有要整理的就 wait"}
+	}
+	return DashboardRhythmSignal{
+		Kind:             kind,
+		Reason:           reason,
+		SuggestedActions: actions,
+		IdleForMs:        idleFor.Milliseconds(),
+		CreatedAt:        common.ISO(now),
+	}
+}
+
+func (a *AgentRuntime) rhythmDue(now time.Time, kind string) bool {
+	var last **time.Time
+	var interval time.Duration
+	cfg := a.cfg.Server.Agent.Autonomous.Rhythm
+	switch kind {
+	case "creative":
+		last = &a.lastCreativeRhythm
+		interval = time.Duration(cfg.CreativeEveryMs) * time.Millisecond
+		if interval <= 0 {
+			interval = 45 * time.Minute
+		}
+	case "review":
+		last = &a.lastReviewRhythm
+		interval = time.Duration(cfg.ReviewEveryMs) * time.Millisecond
+		if interval <= 0 {
+			interval = 90 * time.Minute
+		}
+	case "news":
+		last = &a.lastNewsRhythm
+		interval = time.Duration(cfg.NewsEveryMs) * time.Millisecond
+		if interval <= 0 {
+			interval = time.Hour
+		}
+	default:
+		return false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if *last == nil || now.Sub(**last) >= interval {
+		copied := now
+		*last = &copied
+		return true
+	}
+	return false
+}
+
+func (a *AgentRuntime) unreadNewsCount() int {
+	if cursor, ok := a.store.NewsFeedCursor("ithome"); ok {
+		return a.store.CountNewsArticlesNewerThanCursor("ithome", cursor)
+	}
+	return a.store.CountNewsArticlesNewerThanCursor("ithome", db.NewsFeedCursor{})
+}
+
+func autonomousIdleDelay(cfg config.AutonomousConfig) time.Duration {
+	delay := time.Duration(cfg.IdleDelayMs) * time.Millisecond
+	if delay <= 0 {
+		return 10 * time.Minute
+	}
+	return delay
+}
+
+func autonomousIdleWatchInterval(idleDelay time.Duration) time.Duration {
+	if idleDelay <= 0 {
+		return time.Minute
+	}
+	interval := idleDelay / 4
+	if interval < 5*time.Second {
+		return 5 * time.Second
+	}
+	if interval > time.Minute {
+		return time.Minute
+	}
+	return interval
+}
+
+func (a *AgentRuntime) shouldQueueAutonomousIdleWake(now time.Time, idleDelay time.Duration) bool {
+	if !a.cfg.Server.Agent.Autonomous.Enabled || idleDelay <= 0 || a.events.Count() > 0 {
+		return false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.initialized || a.loopState != "idle" || a.autonomousPending || a.autonomousUntil != nil {
+		return false
+	}
+	if a.lastActivity == nil {
+		return true
+	}
+	return now.Sub(*a.lastActivity) >= idleDelay
 }
 
 func (a *AgentRuntime) runRootLoopOnce() {
@@ -334,9 +519,11 @@ func (a *AgentRuntime) consumePendingEvents() bool {
 					continue
 				}
 				afterCooldown, _ := event.Data["afterCooldown"].(bool)
-				if a.prepareAutonomousRound(afterCooldown) {
+				signal := rhythmSignalFromEvent(event)
+				if a.prepareAutonomousRound(afterCooldown, signal) {
 					a.store.Log("info", "Agent autonomous continuation wake", map[string]any{
 						"event":            "agent.root.self_continuation",
+						"rhythm":           signal.Kind,
 						"consecutiveRound": a.autonomousRoundCount(),
 						"maxConsecutive":   a.cfg.Server.Agent.Autonomous.MaxConsecutiveRounds,
 						"afterCooldown":    afterCooldown,
@@ -399,6 +586,34 @@ func (a *AgentRuntime) consumePendingEvents() bool {
 	}
 	a.scheduleStoryBatch()
 	return shouldRunRoot
+}
+
+func rhythmSignalFromEvent(event AgentEvent) DashboardRhythmSignal {
+	actions := []string{}
+	switch raw := event.Data["actions"].(type) {
+	case []string:
+		actions = append(actions, raw...)
+	case []any:
+		for _, item := range raw {
+			if s := strings.TrimSpace(common.AsString(item)); s != "" {
+				actions = append(actions, s)
+			}
+		}
+	}
+	kind := strings.TrimSpace(common.AsString(event.Data["rhythm"]))
+	if kind == "" {
+		kind = "quiet"
+	}
+	reason := strings.TrimSpace(common.AsString(event.Data["message"]))
+	if reason == "" {
+		reason = "外界暂时安静，可以选择做一小步自己的事，也可以 wait。"
+	}
+	return DashboardRhythmSignal{
+		Kind:             kind,
+		Reason:           reason,
+		SuggestedActions: actions,
+		CreatedAt:        common.ISO(event.At),
+	}
 }
 
 func hasExternalAgentEvent(events []AgentEvent) bool {
@@ -536,7 +751,7 @@ func toolCallHasSideEffect(call agentruntime.ToolCall) bool {
 	switch name {
 	case "send_message", "bash", "browser", "searchMagnetFromWeb":
 		return true
-	case "todo_app", "novel_app", "project_app", "music_app", "news_app":
+	case "todo_app", "novel_app", "project_app", "music_app", "news_app", "activity_app", "workspace_app":
 		return personalAppActionHasSideEffect(name, invocationArguments(call.Arguments))
 	default:
 		return false
@@ -580,6 +795,10 @@ func personalAppActionHasSideEffect(tool string, args map[string]any) bool {
 		}
 	case "news_app":
 		return action == "save_takeaway"
+	case "activity_app":
+		return action == "start" || action == "finish"
+	case "workspace_app":
+		return action == "write"
 	}
 	return false
 }
@@ -667,12 +886,17 @@ func (a *AgentRuntime) rootRoundMessages() ([]agentruntime.Message, bool) {
 	if !a.autonomousPending {
 		return messages, false
 	}
-	messages = append(messages, agentruntime.Message{Role: "user", Content: prompts.SelfContinuationReminder()})
+	reminder := strings.TrimSpace(a.autonomousReminder)
+	if reminder == "" {
+		reminder = prompts.SelfContinuationReminder()
+	}
+	messages = append(messages, agentruntime.Message{Role: "user", Content: reminder})
 	a.autonomousPending = false
+	a.autonomousReminder = ""
 	return messages, true
 }
 
-func (a *AgentRuntime) prepareAutonomousRound(afterCooldown bool) bool {
+func (a *AgentRuntime) prepareAutonomousRound(afterCooldown bool, signal DashboardRhythmSignal) bool {
 	if !a.cfg.Server.Agent.Autonomous.Enabled {
 		return false
 	}
@@ -693,8 +917,11 @@ func (a *AgentRuntime) prepareAutonomousRound(afterCooldown bool) bool {
 	}
 	a.autonomousRounds = nextRounds
 	a.autonomousPending = true
+	reminder := prompts.RhythmContinuationReminder(signal.Kind, signal.Reason, signal.SuggestedActions)
+	a.autonomousReminder = reminder
+	a.lastRhythmSignal = &signal
 	a.mu.Unlock()
-	a.appendContext(contextItem("system_reminder", "self_continuation", prompts.SelfContinuationReminder()))
+	a.appendContext(contextItem("rhythm_signal", signal.Kind, reminder))
 	return true
 }
 
@@ -751,6 +978,7 @@ func (a *AgentRuntime) resetAutonomousRounds() {
 	}
 	a.autonomousRounds = 0
 	a.autonomousPending = false
+	a.autonomousReminder = ""
 	a.autonomousUntil = nil
 	a.mu.Unlock()
 }
@@ -797,6 +1025,7 @@ func shouldContinueAfterTool(executions []agentruntime.ToolExecution) bool {
 func (a *AgentRuntime) shouldContinueAfterTool(executions []agentruntime.ToolExecution) bool {
 	if !shouldContinueAfterTool(executions) {
 		a.setLastReadOnlyToolSignature("")
+		a.recordToolGuardEvent(toolGuardEventForStop(executions))
 		return false
 	}
 	sig, ok := readOnlyPersonalAppSignature(executions)
@@ -807,10 +1036,43 @@ func (a *AgentRuntime) shouldContinueAfterTool(executions []agentruntime.ToolExe
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.lastReadOnlyToolSig == sig {
+		a.lastToolGuardEvent = &DashboardToolGuardEvent{
+			Rule:      "duplicate_read_only_personal_tool",
+			Tool:      resolvedToolCallName(executions[0].Call),
+			Signature: sig,
+			Message:   "连续重复读取同一个个人工作台状态，已停止续轮，避免 screen/list 空转。",
+			UpdatedAt: common.ISO(time.Now()),
+		}
 		return false
 	}
 	a.lastReadOnlyToolSig = sig
 	return true
+}
+
+func (a *AgentRuntime) recordToolGuardEvent(event *DashboardToolGuardEvent) {
+	if event == nil {
+		return
+	}
+	a.mu.Lock()
+	a.lastToolGuardEvent = event
+	a.mu.Unlock()
+}
+
+func toolGuardEventForStop(executions []agentruntime.ToolExecution) *DashboardToolGuardEvent {
+	if len(executions) == 0 {
+		return nil
+	}
+	now := common.ISO(time.Now())
+	for _, execution := range executions {
+		name := resolvedToolCallName(execution.Call)
+		if toolResultHasError(execution.Result.Content) {
+			return &DashboardToolGuardEvent{Rule: "tool_error_stops_retry", Tool: name, Message: "工具返回错误，停止自动续轮，避免原样重试。", UpdatedAt: now}
+		}
+		if personalAppActionHasSideEffect(name, invocationArguments(execution.Call.Arguments)) {
+			return &DashboardToolGuardEvent{Rule: "personal_write_stops_round", Tool: name, Message: "个人工作台写入已完成，本轮停止，避免每一步都汇报。", UpdatedAt: now}
+		}
+	}
+	return nil
 }
 
 func (a *AgentRuntime) setLastReadOnlyToolSignature(sig string) {
@@ -846,7 +1108,7 @@ func readOnlyPersonalAppSignature(executions []agentruntime.ToolExecution) (stri
 		return "", false
 	}
 	switch action {
-	case "screen", "list", "list_projects", "open_project":
+	case "screen", "list", "list_projects", "open_project", "overview":
 		payload, _ := json.Marshal(map[string]any{
 			"name":      name,
 			"action":    action,
@@ -861,7 +1123,7 @@ func readOnlyPersonalAppSignature(executions []agentruntime.ToolExecution) (stri
 
 func isPersonalAppTool(name string) bool {
 	switch name {
-	case "personal_screen", "todo_app", "novel_app", "project_app", "music_app", "news_app", "activity_app":
+	case "personal_screen", "todo_app", "novel_app", "project_app", "music_app", "news_app", "activity_app", "workspace_app":
 		return true
 	default:
 		return false
@@ -1669,7 +1931,13 @@ func (a *AgentRuntime) ResetPersistedState() {
 	a.injectedStoryIDs = map[string]bool{}
 	a.autonomousRounds = 0
 	a.autonomousPending = false
+	a.autonomousReminder = ""
 	a.autonomousUntil = nil
+	a.lastRhythmSignal = nil
+	a.lastToolGuardEvent = nil
+	a.lastCreativeRhythm = nil
+	a.lastReviewRhythm = nil
+	a.lastNewsRhythm = nil
 	a.mu.Unlock()
 	a.session.Portal()
 	a.store.ResetAgentRuntimeState()
@@ -1941,9 +2209,16 @@ func (a *AgentRuntime) maybeCreateStory(event AgentEvent) {
 
 func (a *AgentRuntime) PersonalNovelEntries() ([]personalapp.NovelEntry, error) {
 	if a.personal == nil {
-		return nil, fmt.Errorf("个人 App 服务不可用")
+		return nil, fmt.Errorf("个人工作台服务不可用")
 	}
 	return a.personal.ListNovelEntries()
+}
+
+func (a *AgentRuntime) PersonalWorkspaceOverview() (personalapp.WorkspaceOverview, error) {
+	if a.personal == nil {
+		return personalapp.WorkspaceOverview{}, fmt.Errorf("个人工作台服务不可用")
+	}
+	return a.personal.WorkspaceOverview()
 }
 
 func (a *AgentRuntime) Snapshot(llm *llm.LLMClient) map[string]any {
@@ -1957,6 +2232,12 @@ func (a *AgentRuntime) Snapshot(llm *llm.LLMClient) map[string]any {
 	}
 	taskCounts := a.store.AgentTaskStatusCounts()
 	toolExecutionCounts := a.store.ToolExecutionStatusCounts()
+	var workspace any
+	if a.personal != nil {
+		if overview, err := a.personal.WorkspaceOverview(); err == nil {
+			workspace = overview
+		}
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	now := common.ISO(time.Now())
@@ -1980,6 +2261,10 @@ func (a *AgentRuntime) Snapshot(llm *llm.LLMClient) map[string]any {
 			"consecutiveRounds":    a.autonomousRounds,
 			"maxConsecutiveRounds": a.cfg.Server.Agent.Autonomous.MaxConsecutiveRounds,
 			"cooldownUntil":        nullableTime(a.autonomousUntil),
+			"lastRhythmSignal":     a.lastRhythmSignal,
+		},
+		"toolGuard": map[string]any{
+			"lastEvent": a.lastToolGuardEvent,
 		},
 	}
 	contextSummary := map[string]any{
@@ -2002,6 +2287,7 @@ func (a *AgentRuntime) Snapshot(llm *llm.LLMClient) map[string]any {
 					"toolExecutions":    toolExecutionCounts,
 				},
 				"providers": llm.ListProviders("agent")["providers"],
+				"workspace": workspace,
 			},
 			map[string]any{
 				"id": "story", "kind": "story", "label": "故事智能体",
@@ -2025,7 +2311,7 @@ func createSystemPrompt(cfg *config.Config) string {
 func invokeToolGuide() string {
 	return strings.Join([]string{
 		"- 主循环直接暴露具体工具；每轮只调用一个工具。",
-		"- 控制工具：wait 表示沉默并等待新事件；enter/back_to_portal/help 只用于进入、退出或查看个人 App/工具环境，不用于 QQ 聊天和新闻。",
+		"- 控制工具：wait 表示沉默并等待新事件；enter/back_to_portal/help 只用于进入、退出或查看个人工作台/工具环境，不用于 QQ 聊天和新闻。",
 		"- QQ 群/私聊：决定发言时直接调用 send_message。message 必须非空；回复最新 QQ 消息所在会话时可省略 targetType/targetId，跨会话或回复非最新消息时必须显式填写。",
 		"- 没有要发的内容、话题已经被别人说完、只是想总结或点评时，直接调用 wait，不要把 wait 写成普通文本。",
 		"- 网页事实与链接读取：需要补充外部事实、读取网页链接或搜索资料时调用 search_web，参数 query；完整 URL 会优先直接读取页面，失败后再搜索。",
@@ -2035,8 +2321,8 @@ func invokeToolGuide() string {
 		"- 长期记忆：需要主动查找叙事记忆时调用 search_memory，参数 query；召回结果只作参考，不要当成刚发生的新消息复述。",
 		"- IT之家：要阅读全文时调用 open_ithome_article，参数 articleId；看完想分享再调用 send_message。",
 		"- 磁力搜索：只有用户明确请求磁力、种子或下载资源时才调用 searchMagnetFromWeb。",
-		"- 个人 App：personal_screen 查看个人空间状态；activity_app 记录自己正在做的事；todo_app 处理待办；novel_app 写小说/随笔/灵感；project_app 管理项目笔记；music_app 记录音乐；news_app 保存阅读摘记。",
-		"- 个人 App 不要反复 screen：看完状态后应继续写入、修改、打开具体条目、结束活动或 wait。写随笔/灵感优先调用 novel_app(action=\"upsert_entry\", title=\"...\", text=\"...\")。",
+		"- 个人工作台：personal_screen 查看状态；workspace_app 写 journal/drafts/reading/music 文件；activity_app 记录自己正在做的事；todo_app 处理待办；novel_app 续写小说/长草稿；project_app 管理项目笔记；music_app 维护歌单；news_app 保存阅读摘记。",
+		"- 个人工作台不要反复 screen：看完状态后应继续写入、修改、打开具体条目、结束活动或 wait。写随笔/灵感/阅读摘记/听歌记录优先调用 workspace_app(action=\"write\", kind=\"journal|drafts|reading|music\", title=\"...\", text=\"...\")。",
 		"- 做自己的事情时不必每一步都私聊汇报；只有用户正在等结果、动作完成值得说明，或确实有内容想分享时才 send_message。",
 		"- 终端工具：bash/read_bash_output 只在终端能力可用且确实需要执行命令时使用。",
 		"- 工具因为参数错误失败时，修正参数或调用 wait；不要原样重复同一个失败调用。",
@@ -2096,6 +2382,7 @@ func rootControlTools(
 		"music_app":           true,
 		"news_app":            true,
 		"activity_app":        true,
+		"workspace_app":       true,
 		"open_ithome_article": true,
 	}
 	owner := roottools.CatalogSubtoolOwner{

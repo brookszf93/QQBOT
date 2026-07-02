@@ -74,7 +74,7 @@ func normalizeLegacyRootToolCall(call ToolCall) ToolCall {
 
 func legacyRootActionName(name string) string {
 	switch strings.TrimSpace(name) {
-	case "wait", "send_message", "analyze_image", "detect_ai_tone", "browser", "search_web", "search_memory", "searchMagnetFromWeb", "open_ithome_article", "enter", "back_to_portal", "help", "personal_screen", "todo_app", "novel_app", "project_app", "music_app", "news_app", "calculate", "bash", "read_bash_output":
+	case "wait", "send_message", "analyze_image", "detect_ai_tone", "browser", "search_web", "search_memory", "searchMagnetFromWeb", "open_ithome_article", "enter", "back_to_portal", "help", "personal_screen", "workspace_app", "todo_app", "novel_app", "project_app", "music_app", "news_app", "calculate", "bash", "read_bash_output":
 		return strings.TrimSpace(name)
 	case "send", "sendMessage", "send_group_message", "send_private_message":
 		return "send_message"

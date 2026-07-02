@@ -65,12 +65,39 @@ func WakeReminder(t time.Time) string {
 }
 
 func SelfContinuationReminder() string {
-	return `<system_reminder kind="self_continuation">
-外界暂时安静，没有新的 QQ 消息、新闻或任务通知，现在是你自己的时间。
-先看看刚才是否有真正没做完的事情；有就继续一个明确步骤，也可以使用现有工具探索值得了解的内容。
+	return RhythmContinuationReminder("quiet", "外界暂时安静，没有新的 QQ 消息、新闻或任务通知。", nil)
+}
+
+func RhythmContinuationReminder(kind, reason string, actions []string) string {
+	kind = strings.TrimSpace(kind)
+	if kind == "" {
+		kind = "quiet"
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "外界暂时安静，没有新的 QQ 消息、新闻或任务通知。"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, `<rhythm_signal kind="%s">
+%s
+`, kind, reason)
+	if len(actions) > 0 {
+		b.WriteString("这次更适合的动作：\n")
+		for _, action := range actions {
+			action = strings.TrimSpace(action)
+			if action != "" {
+				fmt.Fprintf(&b, "- %s\n", action)
+			}
+		}
+	}
+	b.WriteString(`
+现在是你自己的时间。
+先看看刚才是否有真正没做完的事情；有就继续一个明确步骤。
+也可以自己选择做一小步生活里的事：写随笔/灵感、整理项目、看一篇新闻并记摘记、记录正在听的音乐、处理待办，或使用浏览器/搜索探索值得了解的内容。
 如果没有值得做的事，直接调用 wait。不要为了显得忙而重复搜索、重复发言或制造无意义任务。
 只有确实有值得分享的内容时才向 QQ 发消息，不要仅因为这条提醒主动刷屏。
-</system_reminder>`
+</rhythm_signal>`)
+	return b.String()
 }
 
 type StateReminderChild struct {

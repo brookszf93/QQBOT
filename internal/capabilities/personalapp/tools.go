@@ -16,10 +16,11 @@ type ProjectTool struct{ Service *Service }
 type MusicTool struct{ Service *Service }
 type NewsTool struct{ Service *Service }
 type ActivityTool struct{ Service *Service }
+type WorkspaceTool struct{ Service *Service }
 
 func (ScreenTool) Definition() agentruntime.ToolDefinition {
 	return agentruntime.ToolDefinition{Name: "personal_screen", Description: "读取当前个人 App 画面：todo、novel、projects、browser、music、news 或 activity。", Parameters: agentruntime.ObjectSchema(map[string]any{
-		"app": map[string]any{"type": "string", "enum": []string{"todo", "novel", "projects", "browser", "music", "news", "activity"}},
+		"app": map[string]any{"type": "string", "enum": []string{"workspace", "todo", "novel", "projects", "browser", "music", "news", "activity"}},
 	})}
 }
 func (ScreenTool) Kind() string { return "business" }
@@ -264,6 +265,27 @@ func (t ActivityTool) Execute(_ context.Context, call agentruntime.ToolCall) (ag
 	default:
 		screen, err := t.Service.Screen("activity")
 		return jsonErrOr("screen", screen, err), nil
+	}
+}
+
+func (WorkspaceTool) Definition() agentruntime.ToolDefinition {
+	return agentruntime.ToolDefinition{Name: "workspace_app", Description: "个人文件工作台。用于查看 journal/drafts/reading/music/scratchpad 总览，或写入一条随笔、草稿、阅读摘记、听歌记录。", Parameters: agentruntime.ObjectSchema(map[string]any{
+		"action": map[string]any{"type": "string", "enum": []string{"overview", "write"}},
+		"kind":   map[string]any{"type": "string", "enum": []string{"journal", "drafts", "reading", "music"}},
+		"title":  map[string]any{"type": "string"},
+		"text":   map[string]any{"type": "string"},
+		"tags":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+	})}
+}
+func (WorkspaceTool) Kind() string { return "business" }
+func (t WorkspaceTool) Execute(_ context.Context, call agentruntime.ToolCall) (agentruntime.ToolResult, error) {
+	switch action(call.Arguments) {
+	case "write":
+		item, err := t.Service.WriteWorkspaceEntry(stringArg(call.Arguments, "kind"), stringArg(call.Arguments, "title"), stringArg(call.Arguments, "text"), stringSliceArg(call.Arguments, "tags"))
+		return jsonErrOr("file", item, err), nil
+	default:
+		overview, err := t.Service.WorkspaceOverview()
+		return jsonErrOr("workspace", overview, err), nil
 	}
 }
 

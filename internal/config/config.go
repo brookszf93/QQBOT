@@ -67,6 +67,11 @@ type AutonomousConfig struct {
 	IdleDelayMs          int  `yaml:"idleDelayMs"`
 	MaxConsecutiveRounds int  `yaml:"maxConsecutiveRounds"`
 	CooldownMs           int  `yaml:"cooldownMs"`
+	Rhythm               struct {
+		CreativeEveryMs int `yaml:"creativeEveryMs"`
+		ReviewEveryMs   int `yaml:"reviewEveryMs"`
+		NewsEveryMs     int `yaml:"newsEveryMs"`
+	} `yaml:"rhythm"`
 }
 
 // StoryConfig 控制 Story 批处理、记忆和召回行为。

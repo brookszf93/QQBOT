@@ -501,19 +501,19 @@ func (s *Session) availableToolsLocked(stateID string) []string {
 	case "terminal":
 		return []string{"bash", "read_bash_output"}
 	case "todo":
-		return []string{"personal_screen", "activity_app", "todo_app"}
+		return []string{"personal_screen", "workspace_app", "activity_app", "todo_app"}
 	case "novel":
-		return []string{"personal_screen", "activity_app", "novel_app", "project_app", "todo_app"}
+		return []string{"personal_screen", "workspace_app", "activity_app", "novel_app", "project_app", "todo_app"}
 	case "projects":
-		return []string{"personal_screen", "activity_app", "project_app", "todo_app"}
+		return []string{"personal_screen", "workspace_app", "activity_app", "project_app", "todo_app"}
 	case "browser":
-		return []string{"personal_screen", "activity_app", "browser", "project_app"}
+		return []string{"personal_screen", "workspace_app", "activity_app", "browser", "project_app"}
 	case "music":
-		return []string{"personal_screen", "activity_app", "music_app"}
+		return []string{"personal_screen", "workspace_app", "activity_app", "music_app"}
 	case "news":
-		return []string{"personal_screen", "activity_app", "news_app", "open_ithome_article", "project_app"}
+		return []string{"personal_screen", "workspace_app", "activity_app", "news_app", "open_ithome_article", "project_app"}
 	}
-	return []string{"wait", "send_message", "analyze_image", "detect_ai_tone", "browser", "search_web", "search_memory", "searchMagnetFromWeb", "open_ithome_article", "personal_screen", "activity_app", "todo_app", "novel_app", "project_app", "music_app", "news_app"}
+	return []string{"wait", "send_message", "analyze_image", "detect_ai_tone", "browser", "search_web", "search_memory", "searchMagnetFromWeb", "open_ithome_article", "personal_screen", "workspace_app", "activity_app", "todo_app", "novel_app", "project_app", "music_app", "news_app"}
 }
 
 func (s *Session) availableToolsLockedForSnapshot() []string {

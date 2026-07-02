@@ -152,7 +152,7 @@ func TestSelfContinuationReminderIsEphemeral(t *testing.T) {
 		autonomousPending: true,
 	}
 	messages, autonomous := runtime.rootRoundMessages()
-	if !autonomous || len(messages) != 2 || !strings.Contains(messages[1].Content, "self_continuation") {
+	if !autonomous || len(messages) != 2 || !strings.Contains(messages[1].Content, "rhythm_signal") {
 		t.Fatalf("expected one ephemeral reminder: %#v", messages)
 	}
 	if len(runtime.rootMessages) != 1 {
@@ -161,6 +161,52 @@ func TestSelfContinuationReminderIsEphemeral(t *testing.T) {
 	next, autonomous := runtime.rootRoundMessages()
 	if autonomous || len(next) != 1 {
 		t.Fatalf("ephemeral reminder should be consumed once: %#v", next)
+	}
+}
+
+func TestAutonomousIdleWakeRequiresRealIdleRuntime(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.Local)
+	lastActivity := now.Add(-11 * time.Minute)
+	runtime := &AgentRuntime{
+		cfg: &config.Config{Server: config.ServerConfig{Agent: config.AgentConfig{
+			Autonomous: config.AutonomousConfig{Enabled: true, IdleDelayMs: int((10 * time.Minute).Milliseconds())},
+		}}},
+		events:       NewEventQueue(),
+		initialized:  true,
+		loopState:    "idle",
+		lastActivity: &lastActivity,
+	}
+	if !runtime.shouldQueueAutonomousIdleWake(now, 10*time.Minute) {
+		t.Fatal("idle initialized runtime should queue autonomous wake")
+	}
+
+	runtime.events.Enqueue(AgentEvent{Type: "napcat_private_message"})
+	if runtime.shouldQueueAutonomousIdleWake(now, 10*time.Minute) {
+		t.Fatal("pending external events must suppress autonomous wake")
+	}
+	runtime.events.DequeueAll()
+
+	runtime.autonomousPending = true
+	if runtime.shouldQueueAutonomousIdleWake(now, 10*time.Minute) {
+		t.Fatal("existing autonomous pending wake must not be duplicated")
+	}
+	runtime.autonomousPending = false
+
+	runtime.loopState = "calling_root_llm"
+	if runtime.shouldQueueAutonomousIdleWake(now, 10*time.Minute) {
+		t.Fatal("busy runtime must not queue autonomous wake")
+	}
+}
+
+func TestAutonomousIdleWatchIntervalIsBounded(t *testing.T) {
+	if got := autonomousIdleWatchInterval(time.Second); got != 5*time.Second {
+		t.Fatalf("short idle delay should use minimum interval, got %s", got)
+	}
+	if got := autonomousIdleWatchInterval(time.Hour); got != time.Minute {
+		t.Fatalf("long idle delay should use maximum interval, got %s", got)
+	}
+	if got := autonomousIdleWatchInterval(40 * time.Second); got != 10*time.Second {
+		t.Fatalf("normal idle delay should use quarter interval, got %s", got)
 	}
 }
 

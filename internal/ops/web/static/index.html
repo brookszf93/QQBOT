@@ -272,6 +272,10 @@
               <input id="essays-query" class="grow" placeholder="搜索随笔标题、草稿、笔记或项目 ID" />
               <button data-load="essays">查询</button>
             </div>
+            <section class="panel" style="margin-bottom:12px">
+              <div class="panel-head"><h2>个人文件工作台</h2><span class="subtle">journal / drafts / reading / music</span></div>
+              <div class="panel-body" id="workspace-result">loading...</div>
+            </section>
             <div id="essays-result" class="essay-list"></div>
           </section>
 
@@ -428,12 +432,18 @@
         $("dashboard").textContent = json(dashboard);
         $("health").textContent = json(health);
         $("dashboard-time").textContent = time(health.timestamp);
-        const root = dashboard.root ?? dashboard.agent ?? dashboard;
-        const story = dashboard.story ?? dashboard.storyAgent ?? {};
+        const agents = dashboard.agents || [];
+        const rootAgent = agents.find(agent => agent.id === "root") || {};
+        const storyAgent = agents.find(agent => agent.id === "story") || {};
+        const root = rootAgent.runtime ?? dashboard.root ?? dashboard.agent ?? dashboard;
+        const story = storyAgent.runtime ?? dashboard.story ?? dashboard.storyAgent ?? {};
+        const rhythm = root.autonomous?.lastRhythmSignal?.kind || "-";
+        const guard = root.toolGuard?.lastEvent?.rule || "-";
         $("overview-stats").innerHTML = [
           ["Health", health.status ?? "unknown"],
           ["Root State", root.loopState ?? root.state ?? "unknown"],
-          ["Root Messages", root.messageCount ?? root.messages?.length ?? "-"],
+          ["Rhythm", rhythm],
+          ["ToolGuard", guard],
           ["Story State", story.loopState ?? story.state ?? "unknown"]
         ].map(([label, value]) => `<div class="stat"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join("");
       }
@@ -498,8 +508,21 @@
           <div class="essay-body">${body || `<div class="empty">这个项目还没有正文</div>`}</div>
         </article>`;
       }
+      function renderWorkspace(workspace) {
+        workspace = workspace || {};
+        const sections = workspace.sections || {};
+        const recent = workspace.recent || [];
+        const sectionStats = ["journal", "drafts", "reading", "music"].map(kind =>
+          `<div class="stat"><span>${esc(kind)}</span><strong>${esc(sections[kind] ?? 0)}</strong></div>`
+        ).join("");
+        const activity = workspace.currentActivity ? `<div class="notice show">当前活动：${esc(workspace.currentActivity.title || workspace.currentActivity.id)} <span class="subtle">${esc(workspace.currentActivity.kind || "")}</span></div>` : "";
+        const activeNovel = workspace.activeNovelProject ? `<div class="subtle">活跃长草稿：${esc(workspace.activeNovelProject.title || workspace.activeNovelProject.id)}</div>` : "";
+        const recentRows = recent.length ? recent.map(file => `<tr><td>${badge(file.kind)}</td><td><strong>${esc(file.title)}</strong><div class="subtle">${esc(file.path)}</div></td><td>${esc(time(file.updatedAt))}</td><td><div class="clip">${esc(clip(file.preview || "", 120))}</div></td></tr>`).join("") : `<tr><td colspan="4" class="empty">暂无文件</td></tr>`;
+        return `${activity}<div class="stats">${sectionStats}</div>${activeNovel}<div class="table-wrap"><table><thead><tr><th>类型</th><th>文件</th><th>更新时间</th><th>预览</th></tr></thead><tbody>${recentRows}</tbody></table></div>`;
+      }
       async function loadEssays() {
-        const data = await request("/personal-apps/novel");
+        const [data, workspaceData] = await Promise.all([request("/personal-apps/novel"), request("/personal-apps/workspace")]);
+        $("workspace-result").innerHTML = renderWorkspace(workspaceData.workspace);
         const query = $("essays-query").value.trim().toLowerCase();
         let items = data.items || [];
         if (query) items = items.filter(item => essaySearchText(item).includes(query));

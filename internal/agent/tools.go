@@ -52,6 +52,7 @@ func buildBusinessTools(cfg *config.Config, store *db.Store, sender messaging.Se
 		personalapp.MusicTool{Service: personal},
 		personalapp.NewsTool{Service: personal},
 		personalapp.ActivityTool{Service: personal},
+		personalapp.WorkspaceTool{Service: personal},
 		calculateTool{},
 	)
 	if cfg.Server.Browser.Enabled {

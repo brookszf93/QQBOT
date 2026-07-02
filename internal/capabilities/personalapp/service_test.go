@@ -72,6 +72,38 @@ func TestServicePersistsNovelTodoMusicAndNews(t *testing.T) {
 	}
 }
 
+func TestWorkspaceToolWritesFileAndOverview(t *testing.T) {
+	service := NewService(t.TempDir())
+	tool := WorkspaceTool{Service: service}
+
+	result, err := tool.Execute(context.Background(), agentruntime.ToolCall{
+		ID: "workspace-write",
+		Arguments: map[string]any{
+			"action": "write",
+			"kind":   "journal",
+			"title":  "今天的节奏",
+			"text":   "先写一点，再去看群里有没有新梗。",
+			"tags":   []any{"rhythm", "journal"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Content, `"ok":true`) || !strings.Contains(result.Content, "今天的节奏") {
+		t.Fatalf("workspace write failed: %s", result.Content)
+	}
+	overview, err := service.WorkspaceOverview()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.Sections["journal"] != 1 || len(overview.Recent) != 1 {
+		t.Fatalf("workspace overview missing journal entry: %#v", overview)
+	}
+	if _, err := os.Stat(filepath.Join(service.Root(), overview.Recent[0].Path)); err != nil {
+		t.Fatalf("workspace markdown missing: %v", err)
+	}
+}
+
 func TestServiceClearsDanglingActiveNovelProject(t *testing.T) {
 	service := NewService(t.TempDir())
 	if err := service.ensure(); err != nil {
