@@ -1,17 +1,16 @@
 server:
   # Go HTTP 服务端口；管理台和 API 都从这个端口访问。
-  port: 8000
+  port: 20003
 
-  # 数据库连接地址。当前 Go 版实际使用本地 SQLite 文件 data/qqbot-ai-store.sqlite。
+  # 保留字段。当前 Go 版实际使用本地 SQLite 文件 data/qqbot-ai-store.sqlite。
   databaseUrl: ""
 
   bot:
     # 机器人自己的 QQ 号，用于过滤自己发出的消息，也会写入主系统提示词。
     qq: ""
     creator:
-      # 创造者名称，会出现在主系统提示词身份信息中。
+      # 创造者名称和 QQ，会写入主系统提示词身份信息。
       name: "创造者"
-      # 创造者 QQ，会出现在主系统提示词身份信息中。
       qq: ""
 
   napcat:
@@ -24,29 +23,66 @@ server:
     # 允许机器人监听的 QQ 群。
     listenGroupIds:
       - ""
-    # 首次进入某个群聊/私聊状态时，最多补入多少条最近消息作为上下文。
+    # 启动时补入多少条最近消息作为初始上下文。
     startupContextRecentMessageCount: 40
 
+  browser:
+    # 启用后 Root Agent 会看到 browser 工具；需要同时启动 tools/cloakbrowser-sidecar。
+    enabled: false
+    # CloakBrowser sidecar 默认仅监听本机。
+    baseUrl: http://127.0.0.1:20009
+    # sidecar 绑定非回环地址时必须设置，并与 BROWSER_AUTH_TOKEN 保持一致。
+    authToken: ""
+    timeoutMs: 60000
+    # 相同 sessionId 会复用页面、Cookie、登录状态和浏览历史。
+    defaultSessionId: default
+    maxTaskRounds: 12
+    maxResultChars: 16000
+    screenshotMaxBytes: 8388608
+    # 可发送到 QQ 的浏览器截图只会保存和读取这个目录。
+    screenshotDir: data/browser-screenshots
+
   agent:
-    # 根 Agent 上下文压缩阈值，按估算 token 数判断；越大越少压缩，越小越容易丢旧上下文。
+    # Root Agent 上下文压缩阈值，按估算 token 数判断。
     contextCompactionTotalTokenThreshold: 150000
     # LLM 调用失败后的重试等待时间，单位毫秒。
     llmRetryBackoffMs: 30000
-    # wait 工具声明的最大等待时间，单位毫秒；代码中会限制实际等待，避免长时间卡住回复。
+    # wait 工具最大等待时间，单位毫秒。
     waitToolMaxWaitMs: 600000
-    # 跨状态通知聚合窗口，单位毫秒；用于类似群聊/私聊/新闻事件的批量提醒节奏。
+    # false 时 wait 超时只结束等待，不再为了续缓存额外调用一次完整 Root LLM。
+    cacheKeepaliveEnabled: false
+    # 跨状态通知聚合窗口，单位毫秒。
     notificationBatchWindowMs: 30000
+
+    autonomous:
+      # 没有 QQ、新闻或任务事件时，允许 Agent 延续未完成事务或自行探索。
+      enabled: true
+      # Root 循环真正空闲多久后触发一次节奏信号，单位毫秒。
+      idleDelayMs: 600000
+      # 连续自主唤醒上限；工具内部续轮不重复计数。
+      maxConsecutiveRounds: 2
+      # 达到上限后暂停多久，再允许新一轮自主行动，单位毫秒。
+      cooldownMs: 1800000
+      rhythm:
+        # 安静时隔多久优先给一次创作/随笔节奏。
+        creativeEveryMs: 2700000
+        # 安静时隔多久优先给一次整理项目/回顾节奏。
+        reviewEveryMs: 5400000
+        # 安静且有新闻可读时隔多久给一次新闻节奏。
+        newsEveryMs: 3600000
 
     story:
       # Story Agent 单批最多处理多少条消息。
       batchSize: 24
       # Story Agent 空闲多久后自动 flush 一批消息，单位毫秒。
       idleFlushMs: 120000
+      # Story 历史比 Root 更早压缩，避免每个小批次反复携带数百条旧工具往返。
+      contextCompactionTotalTokenThreshold: 60000
       memory:
         embedding:
           # Story 记忆向量化供应商。google 表示调用 Gemini Embeddings API。
           provider: google
-          # Gemini API key。
+          # Gemini API key；如果 llm.providers.google.apiKey 为空，也可以复用这里。
           apiKey: ""
           # Gemini API 根地址；代码会自动拼接 /v1beta/models/{model}:embedContent。
           baseUrl: https://generativelanguage.googleapis.com
@@ -54,6 +90,9 @@ server:
           model: gemini-embedding-2
           # embedding 输出维度；用于缓存 key 和 Story 文档过滤，需要和 API 返回一致。
           outputDimensionality: 768
+        retrieval:
+          # 向量检索内部候选数量。
+          topK: 3
       recall:
         # search_memory 工具最多返回多少条 Story。
         topK: 2
@@ -61,6 +100,8 @@ server:
         scoreThreshold: 0.65
 
     terminal:
+      # 终端工具初始目录；为空时使用当前工作目录。
+      initialCwd: ""
       # bash 工具单条命令超时时间，单位毫秒。
       commandTimeoutMs: 30000
       # bash 工具返回给模型的输出预览字节数。
@@ -76,91 +117,113 @@ server:
 
   news:
     ithome:
-      # IT 之家 RSS 轮询间隔，单位毫秒；设置为 0 可关闭“你已进入 IT 之家 资讯空间”相关事件。
+      # IT 之家 RSS 轮询间隔，单位毫秒；设置为 0 可关闭新闻轮询。
       pollIntervalMs: 0
       # 每次轮询最多读取 RSS 前多少篇文章。
       recentArticleLimit: 8
       # 打开单篇文章时最多保留多少字符正文。
       articleMaxChars: 8000
+
+  magnetSearch:
+    # 只有用户明确请求磁力、种子或下载资源时才会使用。
+    enabled: false
+    timeoutMs: 15000
+    defaultLimit: 30
+    # TokyoLib 可直接按番号或演员搜索，详情页直接提供磁链。
+    tokyoLibBaseUrl: https://tokyolib.com
+
   llm:
     # 单次 LLM 请求超时时间，单位毫秒。
     timeoutMs: 45000
-    # 是否在日志中打印模型返回的 reasoning/thinking 摘要；默认 false，排障时可临时打开。
-    debugReasoning: true
+    # OAuth/额度类 usage 状态刷新间隔，单位毫秒。
+    authUsageRefreshIntervalMs: 600000
+
     providers:
       deepseek:
-        # DeepSeek API key；为空时不能使用 deepseek provider。
         apiKey: ""
-        # DeepSeek OpenAI-compatible API 地址。
         baseUrl: https://api.deepseek.com
-        # 允许在配置 usage 中选择的 DeepSeek 模型白名单。
         models:
-          - deepseek-v4-pro
+          - deepseek-v4-flash
       openai:
-        # OpenAI provider 的 key。这里指向本地 bridge 时可使用占位值。
         apiKey: ""
-        # OpenAI-compatible Chat Completions bridge 根地址；代码会自动拼接 /chat/completions。
-        # 如果要走 /v1/responses，请使用 openaiCodex provider。
-        baseUrl: http://127.0.0.1:8317/v1
-        # 允许在 usage 中选择的 OpenAI 模型白名单。
+        baseUrl: https://api.openai.com/v1
         models:
-          - gpt-5.4
+          - gpt-4o-mini
+      longcat:
+        apiKey: ""
+        # LongCat OpenAI-compatible API 地址；代码会自动拼接 /chat/completions。
+        baseUrl: https://api.longcat.chat/openai/v1
+        models:
+          - LongCat-2.0
       openaiCodex:
-        # OpenAI Codex provider 的 key。走本地 bridge 时可使用占位值。
         apiKey: ""
-        # OpenAI Codex Responses bridge 地址。
-        baseUrl: http://127.0.0.1:8317/v1/responses
-        # 允许在 usage 中选择的 Codex 模型白名单；usage 里写的模型必须在这里。
+        baseUrl: https://chatgpt.com/backend-api/codex/responses
         models:
-          - gpt-5
           - gpt-5.4
-      # claudeCode:
-      #   # Claude Code provider 的 key。走本地 bridge 时可使用占位值。
-      #   apiKey: ""
-      #   # Claude Code bridge 地址。
-      #   baseUrl: http://127.0.0.1:8317
-      #   # 允许在 usage 中选择的 Claude 模型白名单。
-      #   models:
-      #     - claude-sonnet-4-5-20250929
+      claudeCode:
+        apiKey: ""
+        baseUrl: https://api.anthropic.com
+        models:
+          - claude-sonnet-4.6
+      google:
+        # apiKey 为空时会尝试复用 agent.story.memory.embedding.apiKey。
+        apiKey: ""
+        baseUrl: https://generativelanguage.googleapis.com
+        models:
+          - gemini-3.5-flash
+          - gemini-2.5-flash
 
     usages:
       agent:
-        # 主 Root Agent 使用的模型链路，负责群聊/私聊主要回复和工具决策。
+        # 主 Root Agent：负责聊天、工具决策和个人工作台动作。
         attempts:
-#          - provider: deepseek
-#            model: deepseek-v4-pro
-          - provider: openai-codex
-            model: gpt-5.4
-            # 当前 attempt 重试次数。
+          - provider: longcat
+            model: LongCat-2.0
+            # 限制单轮推理+输出，避免为了决定 wait 消耗过多 token。
+            maxTokens: 2048
             times: 1
       storyAgent:
-        # Story Agent 使用的模型链路，负责把聊天内容整理为长期记忆。
+        # Story Agent：负责把聊天内容整理为长期记忆。
         attempts:
-          # - provider: claude-code
-          #   model: claude-sonnet-4-5-20250929
-          - provider: openai-codex
-            model: gpt-5.4
+          - provider: deepseek
+            model: deepseek-v4-flash
+            maxTokens: 1024
       contextSummarizer:
-        # 上下文压缩/摘要使用的模型链路。
+        # Root/Story 上下文压缩。
         attempts:
-          - provider: openai-codex
-            model: gpt-5.4
-      memoryQuery:
-        # 长期记忆召回前的查询改写模型链路，只负责把最近上下文改写成一句检索 query。
-        attempts:
-          - provider: openai-codex
-            model: gpt-5.4
+          - provider: deepseek
+            model: deepseek-v4-flash
+            maxTokens: 4096
       vision:
-        # 图片消息分析使用的模型链路。
+        # 图片理解。3.5 高负载返回 503 时自动回退到 2.5。
         attempts:
-          - provider: openai-codex
-            model: gpt-5.4
+          - provider: google
+            model: gemini-3.5-flash
+          - provider: google
+            model: gemini-2.5-flash
+      audio:
+        # 语音/音频理解。
+        attempts:
+          - provider: google
+            model: gemini-3.5-flash
+      video:
+        # 视频理解。
+        attempts:
+          - provider: google
+            model: gemini-3.5-flash
       webSearchAgent:
-        # 搜索子 Agent 使用的模型链路；当前 search_web 已改为直接搜索，通常不会触发该 usage。
+        # 搜索摘要/网页读取辅助模型。
         attempts:
-          - provider: openai-codex
-            model: gpt-5.4
+          - provider: deepseek
+            model: deepseek-v4-flash
+            maxTokens: 2048
+      browserAgent:
+        # Browser Task Agent，用于规划浏览器点击、翻页和总结结果。
+        attempts:
+          - provider: deepseek
+            model: deepseek-v4-flash
+            maxTokens: 2048
 
   tavily:
-    # Tavily 搜索 API key；为空时 search_web 会退化为内置空搜索/无外网搜索结果。
+    # Tavily 搜索 API key；为空时 search_web 无法进行联网搜索，但完整 URL 直读仍可按实现尝试。
     apiKey: ""
