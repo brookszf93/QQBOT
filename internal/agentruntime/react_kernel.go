@@ -57,9 +57,35 @@ type RoundResult struct {
 	ToolExecutions []ToolExecution
 }
 
+type ModelErrorDecision struct {
+	Handled bool
+	Retry   bool
+}
+
+type ToolErrorDecision struct {
+	Handled bool
+	Result  *ToolResult
+}
+
+type ReActKernelExtension interface {
+	OnModelError(context.Context, RoundInput, error) (ModelErrorDecision, error)
+	OnToolError(context.Context, RoundInput, Completion, ToolCall, error) (ToolErrorDecision, error)
+}
+
+type ReActKernelExtensionBase struct{}
+
+func (ReActKernelExtensionBase) OnModelError(context.Context, RoundInput, error) (ModelErrorDecision, error) {
+	return ModelErrorDecision{}, nil
+}
+
+func (ReActKernelExtensionBase) OnToolError(context.Context, RoundInput, Completion, ToolCall, error) (ToolErrorDecision, error) {
+	return ToolErrorDecision{}, nil
+}
+
 // ReActKernel 执行一轮模型调用，并分发返回的工具调用。
 type ReActKernel struct {
-	Model Model
+	Model      Model
+	Extensions []ReActKernelExtension
 }
 
 // RunRound 调用一次模型，并执行响应中的全部工具调用。
@@ -71,9 +97,27 @@ func (k ReActKernel) RunRound(ctx context.Context, input RoundInput) (RoundResul
 	if input.Tools != nil {
 		tools = input.Tools.Definitions()
 	}
-	completion, err := k.Model.Chat(ctx, input.SystemPrompt, input.Messages, tools, input.ToolChoice)
-	if err != nil {
-		return RoundResult{}, err
+	var completion Completion
+	for {
+		var err error
+		completion, err = k.Model.Chat(ctx, input.SystemPrompt, input.Messages, tools, input.ToolChoice)
+		if err == nil {
+			break
+		}
+		retry := false
+		for _, extension := range k.Extensions {
+			decision, extensionErr := extension.OnModelError(ctx, input, err)
+			if extensionErr != nil {
+				return RoundResult{}, extensionErr
+			}
+			if decision.Handled && decision.Retry {
+				retry = true
+				break
+			}
+		}
+		if !retry {
+			return RoundResult{}, err
+		}
 	}
 	for i, call := range completion.Message.ToolCalls {
 		completion.Message.ToolCalls[i] = NormalizeToolCall(call)
@@ -83,9 +127,27 @@ func (k ReActKernel) RunRound(ctx context.Context, input RoundInput) (RoundResul
 		return result, nil
 	}
 	for _, call := range completion.Message.ToolCalls {
-		toolResult, err := input.Tools.Execute(ctx, call)
+		toolResult, err := input.Tools.ExecuteRaw(ctx, call)
 		if err != nil {
-			return result, err
+			handled := false
+			for _, extension := range k.Extensions {
+				decision, extensionErr := extension.OnToolError(ctx, input, completion, call, err)
+				if extensionErr != nil {
+					return result, extensionErr
+				}
+				if decision.Handled {
+					handled = true
+					if decision.Result != nil {
+						toolResult = *decision.Result
+					} else {
+						toolResult = ToolResult{}
+					}
+					break
+				}
+			}
+			if !handled {
+				toolResult = input.Tools.ErrorResult(call, err)
+			}
 		}
 		result.ToolExecutions = append(result.ToolExecutions, ToolExecution{Call: call, Result: toolResult})
 	}

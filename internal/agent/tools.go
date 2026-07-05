@@ -34,12 +34,17 @@ func buildBusinessTools(cfg *config.Config, store *db.Store, sender messaging.Se
 	searchService := websearch.URLAwareService{
 		Fallback: websearch.TavilyService{APIKey: cfg.Server.Tavily.APIKey},
 	}
-	aiToneClassifier, err := airadar.NewDefaultClassifier()
-	if err != nil {
-		store.Log("error", "AIRadar model load failed", map[string]any{"event": "airadar.model.load_failed", "error": err.Error()})
+	aiToneEnabled := cfg.Server.Agent.AITone.EnabledValue()
+	var aiToneClassifier *airadar.Classifier
+	if aiToneEnabled {
+		var err error
+		aiToneClassifier, err = airadar.NewDefaultClassifier()
+		if err != nil {
+			store.Log("error", "AIRadar model load failed", map[string]any{"event": "airadar.model.load_failed", "error": err.Error()})
+		}
 	}
 	catalog := agentruntime.NewToolCatalog(
-		sendMessageTool{sender: sender, store: store, screenshotDir: cfg.Server.Browser.ScreenshotDir, aiToneClassifier: aiToneClassifier, aiToneThreshold: 0.65},
+		sendMessageTool{sender: sender, store: store, screenshotDir: cfg.Server.Browser.ScreenshotDir, aiToneClassifier: aiToneClassifier, aiToneThreshold: cfg.Server.Agent.AITone.Threshold, aiToneDisabled: !aiToneEnabled},
 		analyzeImageTool{vision: vision.Agent{Client: llmClient}, requester: requesterFromSender(sender), screenshotDir: cfg.Server.Browser.ScreenshotDir},
 		airadar.DetectTool{Classifier: aiToneClassifier},
 		news.OpenIthomeArticleTool{Store: storeNewsStore{store: store}},
@@ -164,6 +169,7 @@ type sendMessageTool struct {
 	screenshotDir    string
 	aiToneClassifier *airadar.Classifier
 	aiToneThreshold  float64
+	aiToneDisabled   bool
 }
 
 func (t sendMessageTool) Definition() agentruntime.ToolDefinition {
@@ -182,7 +188,13 @@ func (t sendMessageTool) Execute(_ context.Context, call agentruntime.ToolCall) 
 		return agentruntime.ToolResult{}, fmt.Errorf("消息发送器不可用")
 	}
 	targetType, _ := call.Arguments["targetType"].(string)
+	targetType = strings.TrimSpace(targetType)
+	if targetType == "" {
+		groupType, _ := call.Arguments["groupType"].(string)
+		targetType = strings.TrimSpace(groupType)
+	}
 	targetID, _ := call.Arguments["targetId"].(string)
+	targetID = strings.TrimSpace(targetID)
 	message, _ := call.Arguments["message"].(string)
 	imagePath, _ := call.Arguments["imagePath"].(string)
 	if strings.TrimSpace(imagePath) != "" {
@@ -216,6 +228,9 @@ func (t sendMessageTool) Execute(_ context.Context, call agentruntime.ToolCall) 
 }
 
 func (t sendMessageTool) blockHighAITone(message string) *agentruntime.ToolResult {
+	if t.aiToneDisabled {
+		return nil
+	}
 	text := strings.TrimSpace(stripCQSegments(message))
 	if text == "" {
 		return nil

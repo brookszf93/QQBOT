@@ -390,6 +390,9 @@ func (o CatalogSubtoolOwner) ExecuteSubtool(ctx context.Context, name string, ar
 	if o.Session != nil && name == "send_message" {
 		if target := o.Session.CurrentChatTarget(); target != nil {
 			targetType := strings.TrimSpace(commonString(args["targetType"]))
+			if targetType == "" {
+				targetType = strings.TrimSpace(commonString(args["groupType"]))
+			}
 			targetID := strings.TrimSpace(commonString(args["targetId"]))
 			if targetType == "" && targetID == "" {
 				args["targetType"] = target.Type
