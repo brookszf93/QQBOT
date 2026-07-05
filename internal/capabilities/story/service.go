@@ -17,12 +17,17 @@ type Service struct {
 
 // Create 校验并持久化 Story，并尽量补齐派生字段。
 func (s Service) Create(ctx context.Context, story Story) (Story, error) {
+	now := time.Now()
 	if story.ID == "" {
-		story.ID = time.Now().Format("20060102150405.000000000")
+		story.ID = now.Format("20060102150405.000000000")
 	}
 	if story.Title == "" {
 		story.Title = ExtractTitle(story.Markdown)
 	}
+	if story.CreatedAt.IsZero() {
+		story.CreatedAt = now
+	}
+	story.UpdatedAt = now
 	if err := s.Repo.Save(ctx, story); err != nil {
 		return Story{}, err
 	}

@@ -37,6 +37,12 @@ server:
     # 跨状态通知聚合窗口，单位毫秒；用于类似群聊/私聊/新闻事件的批量提醒节奏。
     notificationBatchWindowMs: 30000
 
+    aiTone:
+      # 是否启用 send_message 发送前的 AI 腔调自动拦截。设为 false 可完全取消自动检测。
+      enabled: true
+      # AI 腔调拦截阈值；越高越宽松，越低越严格。默认 0.65。
+      threshold: 0.65
+
     story:
       # Story Agent 单批最多处理多少条消息。
       batchSize: 24

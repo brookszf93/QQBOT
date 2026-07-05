@@ -1,11 +1,11 @@
 package agent
 
 import (
+	"QqBot/internal/agentruntime"
+	"QqBot/internal/common"
+	"QqBot/internal/prompts"
 	"encoding/json"
 	"fmt"
-	"qqbot-ai/internal/agentruntime"
-	"qqbot-ai/internal/common"
-	"qqbot-ai/internal/prompts"
 	"strings"
 )
 
@@ -169,4 +169,32 @@ func invokeToolName(call agentruntime.ToolCall) string {
 		name = common.AsString(call.Arguments["name"])
 	}
 	return name
+}
+
+func sanitizeToolResultContent(content string) string {
+	if strings.TrimSpace(content) == "" {
+		return content
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(content), &payload); err != nil {
+		return trimPreview(content, 2000)
+	}
+	changed := false
+	if _, ok := payload["context"]; ok {
+		delete(payload, "context")
+		changed = true
+	}
+	if articleContent, ok := payload["content"].(string); ok && len([]rune(articleContent)) > 500 {
+		payload["contentPreview"] = trimPreview(articleContent, 500)
+		delete(payload, "content")
+		changed = true
+	}
+	if !changed {
+		return content
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return trimPreview(content, 2000)
+	}
+	return string(data)
 }

@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"qqbot-ai/internal/agentruntime"
+	"QqBot/internal/agentruntime"
 	"strings"
 	"testing"
 )

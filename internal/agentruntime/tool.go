@@ -213,6 +213,14 @@ func (c *ToolCatalog) Pick(names ...string) *ToolCatalog {
 
 // Execute 分发模型工具调用，并把普通错误转换成 JSON 工具内容。
 func (c *ToolCatalog) Execute(ctx context.Context, call ToolCall) (ToolResult, error) {
+	result, err := c.ExecuteRaw(ctx, call)
+	if err != nil {
+		return c.ErrorResult(call, err), nil
+	}
+	return result, nil
+}
+
+func (c *ToolCatalog) ExecuteRaw(ctx context.Context, call ToolCall) (ToolResult, error) {
 	tool, ok := c.Get(call.Name)
 	if !ok {
 		return ToolResult{Kind: "control", Content: mustJSON(map[string]any{"ok": false, "error": "UNKNOWN_TOOL", "toolName": call.Name})}, nil
@@ -232,9 +240,17 @@ func (c *ToolCatalog) Execute(ctx context.Context, call ToolCall) (ToolResult, e
 		c.observer.AfterTool(ctx, call, definition, result, err)
 	}
 	if err != nil {
-		return ToolResult{Kind: tool.Kind(), Content: mustJSON(map[string]any{"ok": false, "error": "TOOL_FAILED", "toolName": call.Name, "message": err.Error()})}, nil
+		return ToolResult{Kind: tool.Kind()}, err
 	}
 	return result, nil
+}
+
+func (c *ToolCatalog) ErrorResult(call ToolCall, err error) ToolResult {
+	kind := "business"
+	if tool, ok := c.Get(call.Name); ok {
+		kind = tool.Kind()
+	}
+	return ToolResult{Kind: kind, Content: mustJSON(map[string]any{"ok": false, "error": "TOOL_FAILED", "toolName": call.Name, "message": err.Error()})}
 }
 
 // ObjectSchema 创建工具定义使用的 JSON Schema 外壳。

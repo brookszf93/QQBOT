@@ -1,11 +1,11 @@
 package llm
 
 import (
+	"QqBot/internal/common"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"qqbot-ai/internal/common"
 	"strings"
 )
 
@@ -237,4 +237,21 @@ func countSlice(value any) int {
 	default:
 		return 0
 	}
+}
+
+func toolCallNames(value any) string {
+	items, _ := value.([]any)
+	if len(items) == 0 {
+		return "[]"
+	}
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		call, _ := item.(map[string]any)
+		if call == nil {
+			continue
+		}
+		names = append(names, common.AsString(call["name"]))
+	}
+	data, _ := json.Marshal(names)
+	return string(data)
 }

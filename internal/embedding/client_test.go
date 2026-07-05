@@ -1,11 +1,11 @@
 package embedding
 
 import (
+	"QqBot/internal/config"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"qqbot-ai/internal/config"
 	"strings"
 	"testing"
 )

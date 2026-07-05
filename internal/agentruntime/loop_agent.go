@@ -17,8 +17,9 @@ type LoopAgent interface {
 //
 // 更具体的 Agent 复用该行为，并提供自己的 RunOnce。
 type BaseLoopAgent struct {
-	Interval time.Duration
-	RunOnce  func(context.Context) error
+	Interval        time.Duration
+	RunOnce         func(context.Context) error
+	OnStopRequested func()
 
 	mu      sync.Mutex
 	running bool
@@ -45,16 +46,23 @@ func (a *BaseLoopAgent) Run(ctx context.Context) error {
 		a.mu.Unlock()
 	}()
 
-	interval := a.Interval
-	if interval <= 0 {
-		interval = time.Second
+	var ticker *time.Ticker
+	if a.Interval > 0 {
+		ticker = time.NewTicker(a.Interval)
+		defer ticker.Stop()
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
 	for {
 		if a.RunOnce != nil {
 			if err := a.RunOnce(ctx); err != nil {
 				return err
+			}
+		}
+		if ticker == nil {
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+				continue
 			}
 		}
 		select {
@@ -69,6 +77,9 @@ func (a *BaseLoopAgent) Run(ctx context.Context) error {
 func (a *BaseLoopAgent) Stop() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.OnStopRequested != nil {
+		a.OnStopRequested()
+	}
 	if a.stop != nil {
 		a.stop()
 	}
